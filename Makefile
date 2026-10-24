@@ -7,7 +7,7 @@ COMPOSE := docker compose
 TOOLS := $(COMPOSE) run --rm tools
 
 .PHONY: help env up down nuke build data extract load backfill synthetic stream stream-bg \
-        dbt-deps dbt dbt-docs test lint bi demo psql
+        dbt dbt-fresh dbt-docs test lint bi demo psql
 
 help:  ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -49,11 +49,11 @@ stream:  ## Replay telemetry over MQTT (Ctrl+C to stop)
 stream-bg:  ## Replay telemetry in the background
 	$(COMPOSE) --profile sim up -d simulator
 
-dbt-deps:
-	$(TOOLS) bash -c "cd warehouse/dbt && dbt deps"
-
-dbt: dbt-deps  ## Build + test all dbt models
+dbt:  ## Seed, build and test all dbt models
 	$(TOOLS) bash -c "cd warehouse/dbt && dbt build"
+
+dbt-fresh:  ## Check raw telemetry freshness (source freshness SLA)
+	$(TOOLS) bash -c "cd warehouse/dbt && dbt source freshness"
 
 dbt-docs:  ## Generate dbt docs (data dictionary + lineage) into warehouse/dbt/target
 	$(TOOLS) bash -c "cd warehouse/dbt && dbt docs generate"

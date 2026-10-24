@@ -1,0 +1,12 @@
+smart_campus:
+  target: dev
+  outputs:
+    dev:
+      type: postgres
+      host: "{{ env_var('DB_HOST', 'localhost') }}"
+      port: "{{ env_var('DB_PORT', '5432') | int }}"
+      dbname: "{{ env_var('DB_NAME', 'smart_campus') }}"
+      user: transformer
+      password: "{{ env_var('TRANSFORM_DB_PASSWORD') }}"
+      schema: staging
+      threads: 4

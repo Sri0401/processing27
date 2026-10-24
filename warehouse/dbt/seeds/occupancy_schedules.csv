@@ -1,0 +1,11 @@
+space_usage,weekday_start_hour,weekday_end_hour,weekend_start_hour,weekend_end_hour
+Education,8,18,0,0
+Office,8,18,0,0
+Entertainment/public assembly,9,22,10,18
+Public services,8,18,0,0
+Manufacturing/industrial,7,19,0,0
+Warehouse/storage,7,17,0,0
+Lodging/residential,0,24,0,24
+Healthcare,0,24,0,24
+Food sales and service,7,20,9,16
+Other,8,18,0,0

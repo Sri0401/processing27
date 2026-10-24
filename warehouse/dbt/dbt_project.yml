@@ -1,0 +1,39 @@
+name: smart_campus
+version: "1.0.0"
+config-version: 2
+profile: smart_campus
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+
+vars:
+  # Incremental anomaly detection reprocesses this many days to absorb late telemetry.
+  late_data_lookback_days: 2
+  # Readings this many standard deviations above the trailing 7-day mean are spikes.
+  spike_sigma: 6
+  # Identical non-zero readings for this many consecutive hours = stuck sensor.
+  # Real low-resolution meters legitimately repeat for 6-23h; gap-fill artefacts run 72h+.
+  stuck_hours: 24
+  # Last complete calendar year of telemetry, used for annual energy KPIs (BDG2 covers 2016-2017;
+  # H2 2017 arrives via the live stream).
+  kpi_year: 2016
+  # Year of the latest condition survey / audit cycle, used for asset age and maintenance KPIs.
+  asset_reference_year: 2017
+
+models:
+  smart_campus:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: table
+    marts:
+      +schema: marts
+      +materialized: table
+
+seeds:
+  smart_campus:
+    +schema: seeds

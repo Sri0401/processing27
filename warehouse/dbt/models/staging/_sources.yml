@@ -1,0 +1,28 @@
+version: 2
+
+sources:
+  - name: raw
+    schema: raw
+    description: Raw landing tables written by the ingest Lambda and batch loaders.
+    tables:
+      - name: meter_reading
+        description: Hourly OT meter telemetry (BDG2 replay). Idempotent on (building_id, meter, ts).
+        loaded_at_field: ingested_at
+        freshness:
+          # The live stream should never go quiet for long. History-only environments warn.
+          warn_after: {count: 2, period: hour}
+          error_after: {count: 48, period: hour}
+      - name: telemetry_reject
+        description: Dead-lettered messages that broke the telemetry contract.
+      - name: building_metadata
+        description: BDG2 building metadata for the site.
+      - name: weather_hourly
+        description: Hourly weather observations for the site (BDG2).
+      - name: asset_register
+        description: "Synthetic: building services and fabric assets (CAFM asset register)."
+      - name: condition_survey
+        description: "Synthetic: annual condition surveys, A-D grades."
+      - name: work_order
+        description: "Synthetic: reactive and planned maintenance work orders with costs."
+      - name: accessibility_audit
+        description: "Synthetic: building accessibility audit checks (BS 8300 / Approved Document M)."

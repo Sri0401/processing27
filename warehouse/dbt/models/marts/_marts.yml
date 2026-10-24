@@ -1,0 +1,124 @@
+version: 2
+
+models:
+  # ---------------------------------------------------------------- core
+  - name: dim_building
+    description: Conformed building dimension - one row per building, with age and size bands.
+    columns:
+      - name: building_id
+        tests: [unique, not_null]
+      - name: age_band
+        tests:
+          - accepted_values: {values: ['Pre-1945', '1945-1974', '1975-2003', '2004 onwards']}
+
+  - name: dim_date
+    description: Calendar with UK academic terms.
+    columns:
+      - name: date_day
+        tests: [unique, not_null]
+
+  # ---------------------------------------------------------------- energy
+  - name: fct_energy_hourly
+    description: >
+      Building x meter x hour. kWh with occupancy, term, cost (GBP) and carbon (kgCO2e).
+      Use the *_clean measures for reporting: they exclude flagged readings.
+    columns:
+      - name: is_occupied
+        description: Hour falls inside the occupancy schedule for the building's space use (seed occupancy_schedules).
+        tests: [not_null]
+      - name: cost_gbp_clean
+        description: kWh x tariff unit rate (seed energy_tariffs). Null for flagged readings.
+        tests: [non_negative]
+
+  - name: fct_energy_daily
+    description: Building x meter x day, with heating degree days for weather normalisation.
+    tests:
+      - unique_combination:
+          columns: [building_id, meter, local_date]
+
+  - name: mart_building_energy_kpis
+    description: >
+      Annual energy KPIs per building and meter for the KPI year: consumption, cost, carbon,
+      energy use intensity (kWh/m2) benchmarked against peers of the same space use, baseload and peak.
+    tests:
+      - unique_combination:
+          columns: [building_id, meter]
+    columns:
+      - name: data_coverage
+        description: Share of hours in the year with a reading. EUI is only reported when >= 90%.
+        tests:
+          - between: {min_value: 0, max_value: 1.0001}
+      - name: eui_kwh_m2
+        description: Energy use intensity, kWh per m2 of floor area per year.
+      - name: eui_vs_peer_median
+        description: "+0.25 means 25% more energy per m2 than the median building with the same use."
+
+  - name: mart_out_of_hours_opportunity
+    description: >
+      Estimated annual savings if each building's out-of-hours share of consumption matched
+      the median of its peers. The headline "quantified opportunity" for facilities teams.
+    columns:
+      - name: savings_kwh
+        tests: [not_null, non_negative]
+      - name: savings_gbp
+        tests: [non_negative]
+
+  - name: mart_energy_anomalies
+    description: Flagged readings (spikes and stuck sensors) with expected values, for BMS triage.
+    columns:
+      - name: anomaly_type
+        tests:
+          - accepted_values: {values: [spike, stuck_sensor]}
+
+  # ---------------------------------------------------------------- platform
+  - name: mart_data_quality
+    description: Telemetry completeness and quality per building meter.
+    columns:
+      - name: completeness
+        tests:
+          - between: {min_value: 0, max_value: 1.0001}
+
+  - name: mart_telemetry_rejects
+    description: Dead-lettered messages per day and reason.
+
+  # ---------------------------------------------------------------- estates
+  - name: fct_work_orders
+    description: One row per maintenance work order, with SLA outcome against seed priority_slas.
+    columns:
+      - name: work_order_id
+        tests: [unique, not_null]
+
+  - name: mart_maintenance_spend_monthly
+    description: Maintenance spend per building, month and asset class, split reactive vs planned.
+
+  - name: mart_asset_condition
+    description: >
+      Latest condition per asset with deterioration, backlog cost and a risk-based investment priority.
+    columns:
+      - name: asset_id
+        tests: [unique, not_null]
+      - name: risk_score
+        tests:
+          - between: {min_value: 1, max_value: 13}
+      - name: investment_priority
+        tests:
+          - accepted_values:
+              values: ['1 - Replace now', '2 - Plan within 2 years', '3 - Plan within 5 years', '4 - Monitor']
+
+  - name: mart_accessibility_compliance
+    description: Accessibility compliance per building with a Red/Amber/Green status.
+    columns:
+      - name: building_id
+        tests: [unique, not_null]
+      - name: rag_status
+        tests:
+          - accepted_values: {values: [Red, Amber, Green]}
+
+  - name: mart_accessibility_gaps
+    description: Remediation worklist - every failed or partially met accessibility check.
+
+  - name: mart_building_scorecard
+    description: One row per building combining energy, assets, maintenance and accessibility.
+    columns:
+      - name: building_id
+        tests: [unique, not_null]

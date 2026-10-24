@@ -1,0 +1,15 @@
+version: 2
+
+models:
+  - name: int_meter_readings_flagged
+    description: >
+      Every reading with data-quality flags (spike, stuck sensor) computed from trailing
+      7-day statistics. Incremental, with a late-data lookback window.
+    tests:
+      - unique_combination:
+          columns: [building_id, meter, reading_ts]
+    columns:
+      - name: is_spike
+        tests: [not_null]
+      - name: is_stuck
+        tests: [not_null]

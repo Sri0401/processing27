@@ -1,0 +1,5 @@
+priority,label,target_hours
+P1,Emergency,8
+P2,Urgent,48
+P3,Routine,168
+P4,Planned,720

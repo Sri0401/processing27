@@ -5,7 +5,7 @@ campus/{site}/{building}/{meter}/telemetry. A small, configurable share of readi
 is corrupted to exercise the platform's data-quality defences:
 
     spike      value x 15                   -> accepted, flagged by dbt anomaly tests
-    stuck      meter repeats a value for 6h -> accepted, flagged by dbt flat-line check
+    stuck      meter repeats a value for 30h -> accepted, flagged by dbt flat-line check
     negative   value < 0                    -> rejected by the ingest contract
     malformed  missing field / bad JSON     -> rejected by the ingest contract
     duplicate  same message sent twice      -> absorbed by idempotent upsert
@@ -31,7 +31,7 @@ from smart_campus.config import SITE_ID, site_dir
 log = logging.getLogger("simulator")
 
 FAULTS = ("spike", "stuck", "negative", "malformed", "duplicate")
-STUCK_HOURS = 6
+STUCK_HOURS = 30  # longer than the dbt `stuck_hours` threshold (24) so it is detected
 
 
 def topic(site_id: str, building_id: str, meter: str) -> str:

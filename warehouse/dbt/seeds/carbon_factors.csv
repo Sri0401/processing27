@@ -1,0 +1,5 @@
+meter,year,kgco2e_per_kwh,source
+electricity,2016,0.41205,UK Government GHG Conversion Factors 2016 (grid electricity) - verify before reporting
+electricity,2017,0.35156,UK Government GHG Conversion Factors 2017 (grid electricity) - verify before reporting
+gas,2016,0.184,UK Government GHG Conversion Factors (natural gas gross CV) - verify before reporting
+gas,2017,0.184,UK Government GHG Conversion Factors (natural gas gross CV) - verify before reporting

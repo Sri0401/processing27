@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: stg_buildings
+    description: One row per BDG2 building on the site, renamed and typed.
+    columns:
+      - name: building_id
+        tests: [unique, not_null]
+      - name: floor_area_m2
+        tests: [not_null, non_negative]
+      - name: year_built_or_imputed
+        description: Build year; imputed from the median of the same space use when missing (see is_year_built_imputed).
+        tests: [not_null]
+
+  - name: stg_meter_readings
+    description: Hourly meter readings in kWh, from both historical backfill and the live stream.
+    tests:
+      - unique_combination:
+          columns: [building_id, meter, reading_ts]
+    columns:
+      - name: building_id
+        tests:
+          - relationships: {to: ref('stg_buildings'), field: building_id}
+      - name: meter
+        tests:
+          - accepted_values: {values: [electricity, gas]}
+      - name: kwh
+        tests: [not_null, non_negative]
+      - name: load_source
+        tests:
+          - accepted_values: {values: [backfill, stream]}
+
+  - name: stg_weather
+    columns:
+      - name: weather_ts
+        tests: [not_null]
+
+  - name: stg_assets
+    columns:
+      - name: asset_id
+        tests: [unique, not_null]
+      - name: building_id
+        tests:
+          - relationships: {to: ref('stg_buildings'), field: building_id}
+      - name: criticality
+        tests:
+          - accepted_values: {values: [1, 2, 3], quote: false}
+
+  - name: stg_condition_surveys
+    columns:
+      - name: survey_id
+        tests: [unique, not_null]
+      - name: asset_id
+        tests:
+          - relationships: {to: ref('stg_assets'), field: asset_id}
+      - name: condition_grade
+        tests:
+          - accepted_values: {values: [A, B, C, D]}
+
+  - name: stg_work_orders
+    columns:
+      - name: work_order_id
+        tests: [unique, not_null]
+      - name: asset_id
+        tests:
+          - relationships: {to: ref('stg_assets'), field: asset_id}
+      - name: work_type
+        tests:
+          - accepted_values: {values: [reactive, planned]}
+      - name: priority
+        tests:
+          - accepted_values: {values: [P1, P2, P3, P4]}
+      - name: total_cost_gbp
+        tests: [non_negative]
+
+  - name: stg_accessibility_checks
+    columns:
+      - name: audit_id
+        tests: [unique, not_null]
+      - name: result
+        tests:
+          - accepted_values: {values: [pass, partial, fail, n/a]}

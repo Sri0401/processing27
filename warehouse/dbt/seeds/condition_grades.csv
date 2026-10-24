@@ -1,0 +1,5 @@
+condition_grade,label,description,grade_score,backlog_factor
+A,As new,Performing as intended and operating efficiently,1,0.0
+B,Sound,Sound and operationally safe with minor deterioration,2,0.1
+C,Poor,Operational but major repair or replacement needed soon,3,0.5
+D,Life expired,Life expired and/or serious risk of imminent failure,4,1.0

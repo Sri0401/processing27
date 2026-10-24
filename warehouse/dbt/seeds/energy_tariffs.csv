@@ -1,0 +1,5 @@
+meter,valid_from,valid_to,unit_rate_gbp_per_kwh,note
+electricity,2016-01-01,2016-12-31,0.105,Assumed UK non-domestic contract rate - replace with the university supply contract
+electricity,2017-01-01,2017-12-31,0.115,Assumed UK non-domestic contract rate - replace with the university supply contract
+gas,2016-01-01,2016-12-31,0.024,Assumed UK non-domestic contract rate - replace with the university supply contract
+gas,2017-01-01,2017-12-31,0.026,Assumed UK non-domestic contract rate - replace with the university supply contract
