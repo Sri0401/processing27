@@ -1,0 +1,33 @@
+# Data (downloaded / generated - never commit)
+data/raw/
+data/staged/
+data/synthetic/
+
+# Python
+.venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# dbt
+warehouse/dbt/target/
+warehouse/dbt/dbt_packages/
+warehouse/dbt/logs/
+logs/
+
+# CDK
+infra/cdk.out/
+infra/.venv/
+node_modules/
+
+# Secrets / local env
+.env
+*.pem
+
+# Editors / OS
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store

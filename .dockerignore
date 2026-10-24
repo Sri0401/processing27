@@ -1,0 +1,9 @@
+.git
+.venv
+data
+infra/cdk.out
+infra/node_modules
+warehouse/dbt/target
+warehouse/dbt/logs
+**/__pycache__
+.env

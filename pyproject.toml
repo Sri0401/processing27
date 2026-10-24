@@ -1,0 +1,21 @@
+[project]
+name = "smart-campus-platform"
+version = "0.1.0"
+description = "Smart Campus OT telemetry & built-asset data platform"
+requires-python = ">=3.11"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "lambdas/ingest"]
+testpaths = ["tests"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py311"
+extend-exclude = ["infra/cdk.out", "warehouse/dbt/target"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+ignore = ["UP038"]  # isinstance(x, (a, b)) is clearer and faster than a | b
+
+[tool.ruff.lint.isort]
+known-first-party = ["smart_campus", "handler", "sinks", "validation", "test_validation"]
