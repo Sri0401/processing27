@@ -26,5 +26,6 @@ def db_conninfo() -> str:
         f"port={os.getenv('DB_PORT', '5432')} "
         f"dbname={os.getenv('DB_NAME', 'smart_campus')} "
         f"user={os.getenv('DB_USER', 'ingest_writer')} "
-        f"password={os.environ['DB_PASSWORD']}"
+        f"password={os.environ['DB_PASSWORD']} "
+        f"sslmode={os.getenv('DB_SSLMODE', 'prefer')}"
     )

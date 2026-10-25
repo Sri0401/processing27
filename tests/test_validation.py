@@ -58,7 +58,7 @@ def test_non_object_payload_is_rejected():
 
 
 def test_unparseable_payload_is_rejected():
-    from smart_campus.bridge import decode
+    from smart_campus.payloads import decode
 
     with pytest.raises(ValidationError, match="unparseable_json"):
         validate(decode(b'{"value": '))

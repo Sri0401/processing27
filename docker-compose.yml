@@ -130,6 +130,8 @@ services:
       GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       BI_DB_PASSWORD: ${BI_DB_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
+      CAMPUS_DB_HOST: db
+      CAMPUS_DB_SSLMODE: disable
     ports: ["3000:3000"]
     volumes:
       - ./dashboards/grafana/provisioning:/etc/grafana/provisioning:ro

@@ -7,7 +7,7 @@ COMPOSE := docker compose
 TOOLS := $(COMPOSE) run --rm tools
 
 .PHONY: help env up down nuke build data extract load backfill synthetic stream stream-bg \
-        dbt dbt-fresh dbt-docs dashboards test lint bi demo psql
+        dbt dbt-fresh dbt-docs dashboards dashboards-build dashboards-check test lint bi demo psql
 
 help:  ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -59,10 +59,14 @@ dbt-fresh:  ## Check raw telemetry freshness (source freshness SLA)
 dbt-docs:  ## Generate dbt docs (data dictionary + lineage) into warehouse/dbt/target
 	$(TOOLS) bash -c "cd warehouse/dbt && dbt docs generate"
 
-dashboards:  ## Regenerate Grafana dashboards from code, then smoke-test their SQL as bi_reader
-	$(TOOLS) python dashboards/build_dashboards.py
-	$(TOOLS) python dashboards/check_dashboards.py
+dashboards: dashboards-build dashboards-check  ## Regenerate dashboards, smoke-test their SQL, reload Grafana
 	$(COMPOSE) restart grafana
+
+dashboards-build:  ## Generate Grafana dashboard JSON from code
+	$(TOOLS) python dashboards/build_dashboards.py
+
+dashboards-check:  ## Run every dashboard query as the read-only bi_reader role
+	$(TOOLS) python dashboards/check_dashboards.py
 
 test:  ## Unit tests
 	$(TOOLS) pytest -q
@@ -78,3 +82,55 @@ psql:  ## Open psql as admin
 
 demo: up extract load backfill synthetic dbt  ## Full pipeline from scratch
 	@echo "Grafana: http://localhost:3000  |  start live telemetry with: make stream-bg"
+
+# ---------------------------------------------------------------------------- Azure
+# Infrastructure: infra-azure/deploy.sh (needs the Azure CLI). These targets run the data
+# steps against the Azure PostgreSQL server using the same tools container, over TLS.
+-include .azure/secrets.env
+-include .azure/outputs.env
+AZ_DB := -e DB_HOST=$(AZ_DB_HOST) -e DB_SSLMODE=require
+AZ_HOURS ?= 24
+AZ_START ?= 2017-07-01T00:00:00Z
+
+.PHONY: azure-infra azure-apps azure-down azure-require azure-bootstrap azure-load azure-dbt \
+        azure-check azure-stream azure-demo
+
+azure-infra:  ## Azure: deploy resource group, PostgreSQL, Storage, Key Vault, logs, budget
+	./infra-azure/deploy.sh infra
+
+azure-apps:  ## Azure: deploy the ingest API + Grafana container apps (images from GHCR)
+	./infra-azure/deploy.sh apps
+
+azure-down:  ## Azure: delete everything (asks for confirmation)
+	./infra-azure/deploy.sh down
+
+azure-require:
+	@test -n "$(AZ_DB_HOST)" || { echo "No .azure/outputs.env - run infra-azure/deploy.sh infra first"; exit 1; }
+
+azure-bootstrap: azure-require  ## Azure: create database, roles, schemas, raw tables
+	@$(COMPOSE) run --rm -e PGHOST=$(AZ_DB_HOST) -e PGUSER=platform_admin -e PGSSLMODE=require \
+		-e PGPASSWORD=$(AZ_PG_ADMIN_PASSWORD) -e INGEST_DB_PASSWORD=$(AZ_INGEST_DB_PASSWORD) \
+		-e TRANSFORM_DB_PASSWORD=$(AZ_TRANSFORM_DB_PASSWORD) -e BI_DB_PASSWORD=$(AZ_BI_DB_PASSWORD) \
+		tools bash scripts/bootstrap_remote_db.sh
+
+azure-load: azure-require  ## Azure: load reference data, history and synthetic estates data
+	@$(COMPOSE) run --rm $(AZ_DB) -e DB_PASSWORD=$(AZ_INGEST_DB_PASSWORD) tools bash -c "\
+		python -m smart_campus.load reference && \
+		python -m smart_campus.load backfill --until $(BACKFILL_UNTIL) && \
+		python -m smart_campus.load synthetic"
+
+azure-dbt: azure-require  ## Azure: dbt build against the Azure warehouse
+	@$(COMPOSE) run --rm $(AZ_DB) -e TRANSFORM_DB_PASSWORD=$(AZ_TRANSFORM_DB_PASSWORD) -e DBT_THREADS=2 \
+		tools bash -c "cd warehouse/dbt && dbt build"
+
+azure-check: azure-require  ## Azure: run every dashboard query as bi_reader
+	@$(COMPOSE) run --rm $(AZ_DB) -e BI_DB_PASSWORD=$(AZ_BI_DB_PASSWORD) tools python dashboards/check_dashboards.py
+
+azure-stream: azure-require  ## Azure: replay AZ_HOURS of telemetry as gateway batches to the ingest API
+	@test -n "$(AZ_INGEST_URL)" || { echo "Ingest API not deployed - run azure-apps first"; exit 1; }
+	@$(COMPOSE) --profile sim run --rm -e INGEST_API_KEY=$(AZ_INGEST_API_KEY) simulator \
+		python -m smart_campus.simulator --http-endpoint $(AZ_INGEST_URL)/telemetry \
+		--start $(AZ_START) --hours $(AZ_HOURS) --speedup 0.5
+
+azure-demo: azure-bootstrap azure-load azure-dbt azure-check  ## Azure: all data steps after deploy
+	@echo "Grafana: $(AZ_GRAFANA_URL)"

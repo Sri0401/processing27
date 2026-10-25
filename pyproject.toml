@@ -18,4 +18,4 @@ select = ["E", "F", "I", "B", "UP"]
 ignore = ["UP038"]  # isinstance(x, (a, b)) is clearer and faster than a | b
 
 [tool.ruff.lint.isort]
-known-first-party = ["smart_campus", "handler", "sinks", "validation", "test_validation"]
+known-first-party = ["smart_campus", "handler", "sinks", "validation", "test_validation", "test_handler"]

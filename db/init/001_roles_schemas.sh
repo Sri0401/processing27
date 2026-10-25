@@ -14,6 +14,9 @@ psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-S
   CREATE ROLE ingest_writer LOGIN PASSWORD '${INGEST_DB_PASSWORD}';
   CREATE ROLE transformer   LOGIN PASSWORD '${TRANSFORM_DB_PASSWORD}';
   CREATE ROLE bi_reader     LOGIN PASSWORD '${BI_DB_PASSWORD}';
+  -- On managed PostgreSQL (Aurora, Azure) the admin is not a superuser: it needs membership
+  -- to create schemas owned by transformer and to set default privileges on its behalf.
+  GRANT transformer TO ${POSTGRES_USER};
 
   REVOKE ALL ON DATABASE ${POSTGRES_DB} FROM PUBLIC;
   REVOKE CREATE ON SCHEMA public FROM PUBLIC;

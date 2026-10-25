@@ -40,11 +40,12 @@ jobs:
       - run: make extract load synthetic
       - run: make backfill BACKFILL_UNTIL=2016-03-01
       - run: make dbt
+      # Via make, so containers run as the runner's uid and can write to the workspace.
       - name: Dashboard SQL smoke test (as bi_reader)
         run: |
-          docker compose run --rm tools python dashboards/build_dashboards.py
+          make dashboards-build
           git diff --exit-code dashboards/grafana/dashboards  # generated JSON must be committed
-          docker compose run --rm tools python dashboards/check_dashboards.py
+          make dashboards-check
       - name: Stream smoke test (simulator -> MQTT -> ingest -> Postgres)
         run: |
           docker compose --profile sim run --rm simulator \
@@ -78,3 +79,50 @@ jobs:
         with:
           name: cloudformation-template
           path: infra/cdk.out/*.template.json
+
+  azure-bicep:
+    name: Bicep build (Azure)
+    runs-on: ubuntu-24.04
+    needs: lint-test
+    steps:
+      - uses: actions/checkout@v4
+      - run: az bicep install
+      - run: az bicep build --file infra-azure/main.bicep --stdout > /dev/null
+
+  # Images for Azure Container Apps. Uses the workflow's GITHUB_TOKEN - no personal token needed.
+  images:
+    name: Publish images to GHCR
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    needs: [warehouse, azure-bicep]
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Image names (GHCR requires a lowercase owner)
+        run: echo "OWNER=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/smart-campus-platform:${{ github.sha }}
+            ghcr.io/${{ env.OWNER }}/smart-campus-platform:latest
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+          cache-from: type=gha,scope=platform
+          cache-to: type=gha,mode=max,scope=platform
+      - uses: docker/build-push-action@v6
+        with:
+          context: dashboards
+          push: true
+          tags: |
+            ghcr.io/${{ env.OWNER }}/smart-campus-grafana:${{ github.sha }}
+            ghcr.io/${{ env.OWNER }}/smart-campus-grafana:latest
+          labels: org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}

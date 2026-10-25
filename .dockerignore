@@ -7,3 +7,5 @@ warehouse/dbt/target
 warehouse/dbt/logs
 **/__pycache__
 .env
+.azure
+infra-azure

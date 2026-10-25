@@ -17,7 +17,9 @@ CREATE TABLE raw.meter_reading (
     ingested_at  timestamptz      NOT NULL DEFAULT now(),
     PRIMARY KEY (building_id, meter, ts)
 );
-SELECT create_hypertable('raw.meter_reading', by_range('ts', INTERVAL '30 days'));
+-- Classic signature: works on every TimescaleDB 2.x (Azure's managed version included).
+-- On Aurora, which has no TimescaleDB, replace with native partitioning (ADR 0007).
+SELECT create_hypertable('raw.meter_reading', 'ts', chunk_time_interval => INTERVAL '30 days');
 CREATE INDEX ON raw.meter_reading (ingested_at DESC);
 
 -- Dead-letter table: messages that failed validation, kept for triage/replay.

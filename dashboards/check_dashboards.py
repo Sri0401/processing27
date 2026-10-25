@@ -33,7 +33,8 @@ def render(sql: str) -> str:
 def main() -> int:
     conninfo = (
         f"host={os.getenv('DB_HOST', 'localhost')} port={os.getenv('DB_PORT', '5432')} "
-        f"dbname={os.getenv('DB_NAME', 'smart_campus')} user=bi_reader password={os.environ['BI_DB_PASSWORD']}"
+        f"dbname={os.getenv('DB_NAME', 'smart_campus')} user=bi_reader password={os.environ['BI_DB_PASSWORD']} "
+        f"sslmode={os.getenv('DB_SSLMODE', 'prefer')}"
     )
     failures = 0
     with psycopg.connect(conninfo, autocommit=True) as conn:

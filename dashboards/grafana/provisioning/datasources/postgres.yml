@@ -3,14 +3,14 @@ datasources:
   - name: Smart Campus (marts)
     uid: campus-pg
     type: grafana-postgresql-datasource
-    url: db:5432
+    url: $CAMPUS_DB_HOST:5432
     user: bi_reader
     isDefault: true
     secureJsonData:
       password: $BI_DB_PASSWORD
     jsonData:
       database: $POSTGRES_DB
-      sslmode: disable
+      sslmode: $CAMPUS_DB_SSLMODE
       postgresVersion: 1600
       timescaledb: true
       maxOpenConns: 5

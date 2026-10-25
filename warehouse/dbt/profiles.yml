@@ -9,4 +9,5 @@ smart_campus:
       user: transformer
       password: "{{ env_var('TRANSFORM_DB_PASSWORD') }}"
       schema: staging
-      threads: 4
+      sslmode: "{{ env_var('DB_SSLMODE', 'prefer') }}"
+      threads: "{{ env_var('DBT_THREADS', '4') | int }}"

@@ -1,4 +1,4 @@
-"""Output sinks for the ingest handler: S3 raw archive and PostgreSQL (Aurora)."""
+"""Output sinks for the ingest handler: raw archive (S3 or Azure Blob) and PostgreSQL."""
 
 from __future__ import annotations
 
@@ -23,11 +23,20 @@ WHERE raw.meter_reading.value IS DISTINCT FROM EXCLUDED.value
 REJECT_SQL = "INSERT INTO raw.telemetry_reject (reason, payload) VALUES (%s, %s)"
 
 
-class RawArchive:
-    """Writes every received message (valid or not) to the S3 landing zone as JSON Lines.
+def archive_key(received_at: datetime) -> str:
+    """Partitioned by *receipt* time so the archive is append-only and replayable."""
+    return (
+        f"telemetry/dt={received_at:%Y-%m-%d}/hour={received_at:%H}/"
+        f"{received_at:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}.jsonl"
+    )
 
-    Partitioned by *receipt* time so the archive is append-only and replayable.
-    """
+
+def to_jsonl(records: list) -> bytes:
+    return "\n".join(json.dumps(r, default=str) for r in records).encode()
+
+
+class RawArchive:
+    """Writes every received message (valid or not) to the S3 landing zone as JSON Lines."""
 
     def __init__(self, bucket: str, client=None):
         if client is None:
@@ -38,14 +47,40 @@ class RawArchive:
         self.client = client
 
     def write(self, records: list, received_at: datetime | None = None) -> str:
-        received_at = received_at or datetime.now(UTC)
-        key = (
-            f"telemetry/dt={received_at:%Y-%m-%d}/hour={received_at:%H}/"
-            f"{received_at:%Y%m%dT%H%M%S}-{uuid.uuid4().hex[:8]}.jsonl"
-        )
-        body = "\n".join(json.dumps(r, default=str) for r in records).encode()
-        self.client.put_object(Bucket=self.bucket, Key=key, Body=body)
+        key = archive_key(received_at or datetime.now(UTC))
+        self.client.put_object(Bucket=self.bucket, Key=key, Body=to_jsonl(records))
         return key
+
+
+class BlobArchive:
+    """Azure equivalent of RawArchive: same layout, in a Blob Storage container.
+
+    Authenticates with a managed identity (DefaultAzureCredential), so no storage keys exist.
+    """
+
+    def __init__(self, account_url: str, container: str, client=None):
+        if client is None:
+            from azure.identity import DefaultAzureCredential
+            from azure.storage.blob import BlobServiceClient
+
+            client = BlobServiceClient(account_url, credential=DefaultAzureCredential()).get_container_client(
+                container
+            )
+        self.client = client
+
+    def write(self, records: list, received_at: datetime | None = None) -> str:
+        key = archive_key(received_at or datetime.now(UTC))
+        self.client.upload_blob(name=key, data=to_jsonl(records))
+        return key
+
+
+def raw_archive_from_env():
+    """Pick the raw archive from configuration; None when archiving is disabled."""
+    if os.getenv("AZURE_STORAGE_ACCOUNT_URL") and os.getenv("RAW_CONTAINER"):
+        return BlobArchive(os.environ["AZURE_STORAGE_ACCOUNT_URL"], os.environ["RAW_CONTAINER"])
+    if os.getenv("RAW_BUCKET"):
+        return RawArchive(os.environ["RAW_BUCKET"])
+    return None
 
 
 def resolve_conninfo() -> str:
@@ -65,7 +100,8 @@ def resolve_conninfo() -> str:
     return (
         f"host={os.getenv('DB_HOST', 'localhost')} port={os.getenv('DB_PORT', '5432')} "
         f"dbname={os.getenv('DB_NAME', 'smart_campus')} "
-        f"user={os.getenv('DB_USER', 'ingest_writer')} password={os.environ['DB_PASSWORD']}"
+        f"user={os.getenv('DB_USER', 'ingest_writer')} password={os.environ['DB_PASSWORD']} "
+        f"sslmode={os.getenv('DB_SSLMODE', 'prefer')}"
     )
 
 
