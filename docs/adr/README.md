@@ -11,3 +11,4 @@ Short records of significant decisions: the context, what was decided, and what 
 | [0005](0005-layering-and-access-control.md) | Layered schemas with least-privilege roles; BI sees marts only | Accepted |
 | [0006](0006-dashboards-as-code.md) | Generate Grafana dashboards from code; Metabase for ad-hoc work | Accepted |
 | [0007](0007-time-series-storage.md) | TimescaleDB locally, native partitioning on Aurora | Accepted |
+| [0008](0008-azure-deployment.md) | Deploy a live Azure environment alongside the AWS design, within subscription guardrails | Accepted |

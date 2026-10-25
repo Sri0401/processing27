@@ -6,7 +6,7 @@ An end-to-end data platform that brings **building-systems (OT) telemetry** and 
 2. **Assets:** which assets are failing, what is the maintenance backlog, and where should capital go first?
 3. **Accessibility:** which buildings fall short, and what would it cost to fix them?
 
-The platform is designed for **AWS** (IoT Core → Lambda → Aurora PostgreSQL, defined in **AWS CDK**). It runs **entirely locally on free, open-source stand-ins** (Mosquitto, TimescaleDB, SeaweedFS, Grafana), and the same ingest code runs in both.
+The platform is designed for **AWS** (IoT Core → Lambda → Aurora PostgreSQL, defined in **AWS CDK**), is **deployed live on Azure** (Container Apps + PostgreSQL, defined in **Bicep**), and runs **entirely locally on free, open-source stand-ins** (Mosquitto, TimescaleDB, SeaweedFS, Grafana). The same ingest code runs in all three.
 
 | | |
 |---|---|
@@ -52,17 +52,17 @@ flowchart LR
     MARTS --> MB
 ```
 
-| Concern | AWS (in `infra/`) | Local stand-in (`docker-compose.yml`) |
-|---|---|---|
-| Device messaging | IoT Core, X.509 per device, per-building IoT policy | Eclipse Mosquitto |
-| Ingest compute | Lambda (Python 3.12, arm64) in private VPC | Same handler, invoked by `smart_campus.bridge` |
-| Raw landing zone | S3: encrypted, TLS-only, versioned, lifecycle tiers | SeaweedFS (S3 API) |
-| Warehouse | Aurora PostgreSQL Serverless v2 | PostgreSQL 16 + TimescaleDB |
-| Secrets | Secrets Manager (via VPC endpoint) | `.env` (gitignored) |
-| Monitoring | CloudWatch alarms → SNS (errors, throttles, telemetry silence) | Grafana *Platform Health* dashboard |
-| Dashboards | Grafana / QuickSight | Grafana (provisioned from code), Metabase |
+| Concern | AWS design (`infra/`, CDK) | Azure, deployed (`infra-azure/`, Bicep) | Local (`docker-compose.yml`) |
+|---|---|---|---|
+| Device ingress | IoT Core, X.509 per device, per-building IoT policy | Container App `ingest-api` (HTTPS, gateway batches) | Eclipse Mosquitto |
+| Ingest compute | Lambda (Python 3.12, arm64) in private VPC | Same handler in Container Apps (scale to zero) | Same handler via `smart_campus.bridge` |
+| Raw landing zone | S3: encrypted, TLS-only, versioned, lifecycle tiers | Blob Storage, managed identity, no shared keys | SeaweedFS (S3 API) |
+| Warehouse | Aurora PostgreSQL Serverless v2 | PostgreSQL Flexible B1ms + TimescaleDB | PostgreSQL 16 + TimescaleDB |
+| Secrets | Secrets Manager (via VPC endpoint) | Key Vault (RBAC) via managed identity | `.env` (gitignored) |
+| Monitoring / cost | CloudWatch alarms → SNS | Log Analytics (daily cap), budget alert | Grafana *Platform Health* |
+| Dashboards | Grafana / QuickSight | Grafana Container App (public, read-only) | Grafana, Metabase |
 
-Why it's built this way is recorded in [Architecture Decision Records](docs/adr/).
+Why it's built this way is recorded in [Architecture Decision Records](docs/adr/). [ADR 0008](docs/adr/0008-azure-deployment.md) explains how the Azure design works within the subscription's guardrail policies.
 
 ---
 
@@ -72,6 +72,7 @@ Why it's built this way is recorded in [Architecture Decision Records](docs/adr/
 |---|---|
 | **OT telemetry pipelines into a Smart Campus platform** | [`simulator.py`](src/smart_campus/simulator.py) → MQTT → [`bridge.py`](src/smart_campus/bridge.py) → [`lambdas/ingest/`](lambdas/ingest/): versioned message contract, raw archive, idempotent upserts, dead-letter table, retry with backoff |
 | **AWS: Aurora PostgreSQL, Lambda, IoT Core** | [`infra/smart_campus_infra/platform_stack.py`](infra/smart_campus_infra/platform_stack.py): IoT topic rule with S3 error action, VPC Lambda with reserved concurrency, Aurora Serverless v2, no NAT (VPC endpoints) |
+| **Operating a live cloud platform** | [`infra-azure/`](infra-azure/): the same handler and warehouse deployed on Azure with managed identities, Key Vault, a budget alert and scale-to-zero, within existing subscription guardrails ([ADR 0008](docs/adr/0008-azure-deployment.md)) |
 | **Infrastructure as code (CDK)** | `infra/`, with [assertion tests](infra/tests/test_platform_stack.py) that enforce security properties (encryption, no public access, TLS-only) |
 | **Advanced SQL & data models** | [`warehouse/dbt/`](warehouse/dbt/models): incremental model with late-data lookback, gaps-and-islands stuck-sensor detection, `RANGE` window statistics, peer benchmarking with ordered-set aggregates |
 | **Asset condition, maintenance spend, accessibility compliance** | [`marts/estates/`](warehouse/dbt/models/marts/estates): risk-scored investment priority, backlog, reactive-vs-planned spend, SLA, RAG compliance |
@@ -79,7 +80,7 @@ Why it's built this way is recorded in [Architecture Decision Records](docs/adr/
 | **Self-service dashboards for non-technical users** | [`dashboards/build_dashboards.py`](dashboards/build_dashboards.py): three role-based dashboards, plain-English descriptions on every panel |
 | **Governance, security, documentation** | Least-privilege DB roles ([`db/init`](db/init/001_roles_schemas.sh)); BI sees marts only; 89 dbt tests + source-freshness SLA; dbt docs as the data dictionary; [ADRs](docs/adr/); [runbook](docs/runbook.md) |
 | **Explaining technical work to non-technical colleagues** | [Stakeholder brief](docs/stakeholder-brief.md): one page, no jargon |
-| **Sound engineering practice** | CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): lint, unit tests, full pipeline integration run, dashboard SQL smoke test as the BI role, CDK tests + synth |
+| **Sound engineering practice** | CI ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)): lint, unit tests, full pipeline integration run, dashboard SQL smoke test as the BI role, CDK tests + synth, Bicep build, container images published to GHCR |
 
 ---
 
@@ -101,6 +102,16 @@ make dbt          # incremental refresh: picks up streamed readings
 | http://localhost:3001 | Metabase (`make bi`, optional): ad-hoc exploration of the `marts` schema |
 
 Other targets: `make test`, `make lint`, `make dashboards` (regenerate and smoke-test), `make dbt-docs`, `make dbt-fresh`, `make psql`, `make nuke` (delete all data). Run `make help` to list them all.
+
+**Deploying to Azure** (free-tier SKUs; resource group `rg-smartcampus-dev`). Run `deploy.sh` where the Azure CLI is logged in, and the `make` targets where Docker runs:
+
+```bash
+infra-azure/deploy.sh infra    # PostgreSQL B1ms, Storage, Key Vault, Log Analytics, budget (~10 min)
+make azure-demo                # bootstrap DB -> load history + estates data -> dbt build -> dashboard check
+infra-azure/deploy.sh apps     # ingest API + Grafana Container Apps (images published to GHCR by CI)
+make azure-stream AZ_HOURS=24  # replay a day of telemetry as HTTPS gateway batches
+infra-azure/deploy.sh down     # delete everything (asks for confirmation)
+```
 
 **Deploying to AWS** (optional, costs money: Aurora and VPC endpoints are billed hourly):
 
@@ -161,6 +172,7 @@ The simulator injects these faults on purpose (`SIM_FAULT_RATE`) so every defenc
 ├── warehouse/dbt/         seeds, staging, intermediate, marts, tests, docs
 ├── dashboards/            dashboards-as-code generator + SQL smoke test + generated Grafana JSON
 ├── infra/                 AWS CDK app + template tests
+├── infra-azure/           Azure Bicep template + deploy/teardown script
 ├── docs/                  ADRs, stakeholder brief, runbook, data sources
 ├── tests/                 unit tests
 └── docker-compose.yml · Makefile · .github/workflows/ci.yml

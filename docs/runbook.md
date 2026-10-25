@@ -44,3 +44,19 @@ Operating procedures for the platform. Commands are local (`make …`); AWS equi
 - **Change a tariff or carbon factor:** edit the seed CSV, open a PR, and `make dbt` after merge.
 - **Change a dashboard:** edit `dashboards/build_dashboards.py`, then `make dashboards` (regenerates and smoke-tests). Commit the generated JSON.
 - **Change the telemetry contract:** bump `SCHEMA_VERSION`, accept both versions during the migration, and announce it to integrators first.
+
+## Azure environment
+
+| Task | Command |
+|---|---|
+| Deploy or update infrastructure | `infra-azure/deploy.sh infra` |
+| Deploy apps for the current commit (CI must have published its images) | `infra-azure/deploy.sh apps` |
+| Load data and build models | `make azure-demo` |
+| Replay telemetry through the live ingest API | `make azure-stream AZ_HOURS=24` |
+| See app logs | Log Analytics → `ContainerAppConsoleLogs_CL`, or `az containerapp logs show -g rg-smartcampus-dev -n ca-ingest-dev` |
+| Rotate secrets | Delete `.azure/secrets.env`, run `deploy.sh infra`, then update role passwords with `ALTER ROLE … PASSWORD` |
+| **Tear down (stops all spend)** | `infra-azure/deploy.sh down` |
+
+- **Budget alert:** emails at 50% / 90% of actual spend and when the forecast exceeds 100%. The cheapest response is `deploy.sh down`, because everything can be rebuilt from code in about 20 minutes.
+- **First request after idle is slow (~10–20 s):** the apps scale to zero. The simulator's gateway publisher retries with backoff, so no data is lost.
+- **Your IP changed** (dbt or loads cannot connect): re-run `deploy.sh infra`, which updates the `AllowDeployer` firewall rule.
