@@ -65,6 +65,7 @@ class IngestRequestHandler(BaseHTTPRequestHandler):
 
         length = int(self.headers.get("Content-Length") or 0)
         if length <= 0 or length > MAX_BODY_BYTES:
+            self.close_connection = True  # the unread body must not be parsed as a next request
             return self._reply(413 if length else 400, {"error": "invalid_body_size", "max_bytes": MAX_BODY_BYTES})
         try:
             event = json.loads(self.rfile.read(length))

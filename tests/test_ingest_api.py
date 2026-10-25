@@ -50,12 +50,27 @@ def test_batch_is_ingested_through_shared_handler(api):
 @pytest.mark.parametrize(("key", "body", "expected"), [
     ("wrong-key", b"{}", 401),
     (API_KEY, b"not json", 400),
-    (API_KEY, b"x" * (ingest_api.MAX_BODY_BYTES + 1), 413),
-])
+], ids=["bad-key", "bad-json"])
 def test_bad_requests_are_refused_before_the_handler(api, key, body, expected):
     url, db, archive = api
     status, _ = post(f"{url}/telemetry", body, key=key)
     assert status == expected
+    assert archive.batches == []
+
+
+def test_oversized_body_is_refused_without_reading_it(api):
+    """Only the headers are sent: the API must answer 413 from Content-Length alone."""
+    import http.client
+
+    url, _, archive = api
+    conn = http.client.HTTPConnection(url.removeprefix("http://"), timeout=5)
+    conn.putrequest("POST", "/telemetry")
+    conn.putheader("x-api-key", API_KEY)
+    conn.putheader("Content-Length", str(ingest_api.MAX_BODY_BYTES + 1))
+    conn.endheaders()
+    response = conn.getresponse()
+    assert response.status == 413
+    assert response.getheader("Connection") == "close" or response.will_close
     assert archive.batches == []
 
 
