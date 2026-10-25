@@ -6,6 +6,8 @@
   is_stuck  the reading belongs to a run of >= `stuck_hours` consecutive identical non-zero
             values (gaps-and-islands: a value change or a missing hour starts a new run).
             Calibrated on BDG2, whose "cleaned" files contain 72h+ constant gap-fill runs.
+            Zero is allowed for longer (`zero_outage_hours`): a boiler can be legitimately off
+            for a summer weekend, but not a whole campus for weeks (zero-filled data outages).
 
   Incremental: each run reprocesses the last `late_data_lookback_days` days so late or
   corrected telemetry is picked up, reading 8 extra days of history purely as window context.
@@ -83,7 +85,8 @@ select
         false
     )                                                                   as is_spike,
     run_length_hours,
-    (run_length_hours >= {{ stuck_hours }} and kwh > 0)                 as is_stuck
+    (run_length_hours >= {{ stuck_hours }} and kwh > 0)
+        or (run_length_hours >= {{ var('zero_outage_hours') }} and kwh = 0) as is_stuck
 from windowed
 {% if is_incremental() %}
 where reading_ts >= (select max(reading_ts) from {{ this }}) - interval '{{ lookback }} days'

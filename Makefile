@@ -7,7 +7,7 @@ COMPOSE := docker compose
 TOOLS := $(COMPOSE) run --rm tools
 
 .PHONY: help env up down nuke build data extract load backfill synthetic stream stream-bg \
-        dbt dbt-fresh dbt-docs test lint bi demo psql
+        dbt dbt-fresh dbt-docs dashboards test lint bi demo psql
 
 help:  ## Show targets
 	@grep -E '^[a-z-]+:.*##' $(MAKEFILE_LIST) | awk -F':.*## ' '{printf "  %-12s %s\n", $$1, $$2}'
@@ -57,6 +57,11 @@ dbt-fresh:  ## Check raw telemetry freshness (source freshness SLA)
 
 dbt-docs:  ## Generate dbt docs (data dictionary + lineage) into warehouse/dbt/target
 	$(TOOLS) bash -c "cd warehouse/dbt && dbt docs generate"
+
+dashboards:  ## Regenerate Grafana dashboards from code, then smoke-test their SQL as bi_reader
+	$(TOOLS) python dashboards/build_dashboards.py
+	$(TOOLS) python dashboards/check_dashboards.py
+	$(COMPOSE) restart grafana
 
 test:  ## Unit tests
 	$(TOOLS) pytest -q

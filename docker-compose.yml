@@ -110,6 +110,7 @@ services:
       DB_USER: ingest_writer
       DB_PASSWORD: ${INGEST_DB_PASSWORD}
       TRANSFORM_DB_PASSWORD: ${TRANSFORM_DB_PASSWORD}
+      BI_DB_PASSWORD: ${BI_DB_PASSWORD}
       SITE_ID: ${SITE_ID}
       DBT_PROFILES_DIR: /app/warehouse/dbt
     volumes:
@@ -123,6 +124,10 @@ services:
       GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
       GF_USERS_DEFAULT_THEME: light
       GF_ANALYTICS_REPORTING_ENABLED: "false"
+      # Local demo only: read-only anonymous viewing so stakeholders need no account.
+      # In AWS this is replaced by SSO (IAM Identity Center / university Entra ID).
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Viewer
       BI_DB_PASSWORD: ${BI_DB_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
     ports: ["3000:3000"]

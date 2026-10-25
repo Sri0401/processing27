@@ -16,6 +16,8 @@ vars:
   # Identical non-zero readings for this many consecutive hours = stuck sensor.
   # Real low-resolution meters legitimately repeat for 6-23h; gap-fill artefacts run 72h+.
   stuck_hours: 24
+  # Continuous zero readings for this long = meter/data outage rather than genuine zero use.
+  zero_outage_hours: 168
   # Last complete calendar year of telemetry, used for annual energy KPIs (BDG2 covers 2016-2017;
   # H2 2017 arrives via the live stream).
   kpi_year: 2016
