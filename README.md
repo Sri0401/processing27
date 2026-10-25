@@ -58,7 +58,7 @@ flowchart LR
 | Ingest compute | Lambda (Python 3.12, arm64) in private VPC | Same handler in Container Apps (scale to zero) | Same handler via `smart_campus.bridge` |
 | Raw landing zone | S3: encrypted, TLS-only, versioned, lifecycle tiers | Blob Storage, managed identity, no shared keys | SeaweedFS (S3 API) |
 | Warehouse | Aurora PostgreSQL Serverless v2 | PostgreSQL Flexible B1ms + TimescaleDB | PostgreSQL 16 + TimescaleDB |
-| Secrets | Secrets Manager (via VPC endpoint) | Key Vault (RBAC) via managed identity | `.env` (gitignored) |
+| Secrets | Secrets Manager (via VPC endpoint) | Key Vault (RBAC) as source of truth; Container Apps encrypted secrets | `.env` (gitignored) |
 | Monitoring / cost | CloudWatch alarms → SNS | Log Analytics (daily cap), budget alert | Grafana *Platform Health* |
 | Dashboards | Grafana / QuickSight | Grafana Container App (public, read-only) | Grafana, Metabase |
 
@@ -136,6 +136,13 @@ Full write-up for estates colleagues: [docs/stakeholder-brief.md](docs/stakehold
 - **Data quality:** **18% of historical readings are flagged and excluded**, mostly long flat-line gap-fills in the source data. These are surfaced on the Platform Health dashboard rather than hidden.
 
 > Estates figures (assets, work orders, audits) come from **synthetic** data generated to plausible sector patterns. Energy figures come from real BDG2 meter data. Tariffs and carbon factors are editable reference data ([`seeds/`](warehouse/dbt/seeds)).
+
+<details>
+<summary>The same dashboard served live from Azure Container Apps + Azure PostgreSQL</summary>
+
+![Live Azure dashboard](docs/images/dashboard-azure-live.png)
+
+</details>
 
 <details>
 <summary>Estates and Platform Health dashboards</summary>

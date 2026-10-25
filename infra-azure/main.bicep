@@ -64,7 +64,6 @@ var dbName = 'smart_campus'
 
 // Built-in role definition ids
 var roleStorageBlobDataContributor = 'ba92f5b4-2d11-453d-a403-e96b0029c9fe'
-var roleKeyVaultSecretsUser = '4633458b-17de-408a-b874-0445c86b69e6'
 var roleKeyVaultSecretsOfficer = 'b86a8fe4-44ce-4948-aee5-eccb2c155cd7'
 
 // ------------------------------------------------------------------ identity
@@ -156,16 +155,6 @@ resource secrets 'Microsoft.KeyVault/vaults/secrets@2023-07-01' = [for name in o
   properties: { value: secretValues[name] }
 }]
 
-resource appReadsSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
-  name: guid(vault.id, appIdentity.id, roleKeyVaultSecretsUser)
-  scope: vault
-  properties: {
-    principalId: appIdentity.properties.principalId
-    principalType: 'ServicePrincipal'
-    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', roleKeyVaultSecretsUser)
-  }
-}
-
 resource deployerManagesSecrets 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
   name: guid(vault.id, deployerObjectId, roleKeyVaultSecretsOfficer)
   scope: vault
@@ -246,9 +235,8 @@ resource appsEnv 'Microsoft.App/managedEnvironments@2024-03-01' = {
   }
 }
 
-var kvSecret = {
-  identity: appIdentity.id
-}
+// Secrets go into each app's own encrypted secret store. Key Vault remains the source of truth for
+// people and scripts; Key Vault *references* are not supported on Container Apps express environments.
 
 resource ingestApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
   name: 'ca-ingest-${envName}'
@@ -263,8 +251,8 @@ resource ingestApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
     configuration: {
       ingress: { external: true, targetPort: 8080, transport: 'http', allowInsecure: false }
       secrets: [
-        union(kvSecret, { name: 'ingest-db-password', keyVaultUrl: '${vault.properties.vaultUri}secrets/ingest-db-password' })
-        union(kvSecret, { name: 'ingest-api-key', keyVaultUrl: '${vault.properties.vaultUri}secrets/ingest-api-key' })
+        { name: 'ingest-db-password', value: ingestDbPassword }
+        { name: 'ingest-api-key', value: ingestApiKey }
       ]
     }
     template: {
@@ -299,7 +287,7 @@ resource ingestApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
       }
     }
   }
-  dependsOn: [ appReadsSecrets, blobWriter, secrets ]
+  dependsOn: [ blobWriter ]
 }
 
 resource grafanaApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
@@ -315,8 +303,8 @@ resource grafanaApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
     configuration: {
       ingress: { external: true, targetPort: 3000, transport: 'http', allowInsecure: false }
       secrets: [
-        union(kvSecret, { name: 'bi-db-password', keyVaultUrl: '${vault.properties.vaultUri}secrets/bi-db-password' })
-        union(kvSecret, { name: 'grafana-admin-password', keyVaultUrl: '${vault.properties.vaultUri}secrets/grafana-admin-password' })
+        { name: 'bi-db-password', value: biDbPassword }
+        { name: 'grafana-admin-password', value: grafanaAdminPassword }
       ]
     }
     template: {
@@ -342,7 +330,6 @@ resource grafanaApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
       scale: { minReplicas: 0, maxReplicas: 1 }
     }
   }
-  dependsOn: [ appReadsSecrets, secrets ]
 }
 
 // ------------------------------------------------------------------ cost guardrail
