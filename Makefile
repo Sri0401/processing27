@@ -134,3 +134,57 @@ azure-stream: azure-require  ## Azure: replay AZ_HOURS of telemetry as gateway b
 
 azure-demo: azure-bootstrap azure-load azure-dbt azure-check  ## Azure: all data steps after deploy
 	@echo "Grafana: $(AZ_GRAFANA_URL)"
+
+# ---------------------------------------------------------------------------- AWS (brief demo)
+# Infrastructure: scripts/aws_demo.sh (needs the AWS CLI + Node). These targets run the data
+# steps against Aurora from the tools container. See docs/adr/0009-aws-demo-deployment.md.
+-include .aws-demo/outputs.env
+-include .aws-demo/secrets.env
+AWSD_DB := -e DB_HOST=$(AWSD_DB_HOST) -e DB_SSLMODE=require
+
+.PHONY: lambda-layer aws-require aws-bootstrap aws-load aws-dbt aws-check aws-stream aws-grafana aws-demo
+
+lambda-layer:  ## Build the ingest Lambda's arm64 dependency layer (build/ingest-deps-arm64.zip)
+	$(TOOLS) bash -c "rm -rf build/layer build/ingest-deps-arm64.zip && \
+		pip install --quiet --platform manylinux2014_aarch64 --only-binary=:all: --python-version 3.12 \
+			--implementation cp --target build/layer/python 'psycopg[binary]==3.2.3' && \
+		cd build/layer && python -m zipfile -c ../ingest-deps-arm64.zip python && \
+		ls -l ../ingest-deps-arm64.zip"
+
+aws-require:
+	@test -n "$(AWSD_DB_HOST)" || { echo "No .aws-demo/outputs.env - run scripts/aws_demo.sh up first"; exit 1; }
+
+aws-bootstrap: aws-require  ## AWS: create roles, schemas and raw tables on Aurora
+	@$(COMPOSE) run --rm -e PGHOST=$(AWSD_DB_HOST) -e PGUSER=platform_admin -e PGSSLMODE=require \
+		-e PGPASSWORD=$(AWSD_ADMIN_PASSWORD) -e INGEST_DB_PASSWORD=$(AWSD_INGEST_DB_PASSWORD) \
+		-e TRANSFORM_DB_PASSWORD=$(AWSD_TRANSFORM_DB_PASSWORD) -e BI_DB_PASSWORD=$(AWSD_BI_DB_PASSWORD) \
+		tools bash scripts/bootstrap_remote_db.sh
+
+aws-load: aws-require  ## AWS: load reference data, history and synthetic estates data into Aurora
+	@$(COMPOSE) run --rm $(AWSD_DB) -e DB_PASSWORD=$(AWSD_INGEST_DB_PASSWORD) tools bash -c "\
+		python -m smart_campus.load reference && \
+		python -m smart_campus.load backfill --until $(BACKFILL_UNTIL) && \
+		python -m smart_campus.load synthetic"
+
+aws-dbt: aws-require  ## AWS: dbt build against Aurora
+	@$(COMPOSE) run --rm $(AWSD_DB) -e TRANSFORM_DB_PASSWORD=$(AWSD_TRANSFORM_DB_PASSWORD) -e DBT_THREADS=2 \
+		tools bash -c "cd warehouse/dbt && dbt build"
+
+aws-check: aws-require  ## AWS: run every dashboard query against Aurora as bi_reader
+	@$(COMPOSE) run --rm $(AWSD_DB) -e BI_DB_PASSWORD=$(AWSD_BI_DB_PASSWORD) tools python dashboards/check_dashboards.py
+
+AWS_HOURS ?= 24
+aws-stream: aws-require  ## AWS: replay AWS_HOURS of telemetry to IoT Core over MQTT/TLS with the gateway cert
+	@test -f .aws-demo/gateway.cert.pem || { echo "No gateway certificate - run scripts/aws_demo.sh cert"; exit 1; }
+	@$(COMPOSE) --profile sim run --rm -v ./.aws-demo:/app/.aws-demo:ro \
+		-e MQTT_HOST=$(AWSD_IOT_ENDPOINT) -e MQTT_PORT=8883 -e MQTT_CLIENT_ID=$(AWSD_GATEWAY_THING) \
+		-e MQTT_TLS_CERT=/app/.aws-demo/gateway.cert.pem -e MQTT_TLS_KEY=/app/.aws-demo/gateway.private.key \
+		-e MQTT_MAX_RATE=50 simulator \
+		python -m smart_campus.simulator --start $(AZ_START) --hours $(AWS_HOURS) --speedup 0.1
+
+aws-grafana: aws-require  ## AWS: local Grafana on :3002 reading the Aurora warehouse
+	@$(COMPOSE) run --rm -d --name grafana-aurora -p 3002:3000 -e CAMPUS_DB_HOST=$(AWSD_DB_HOST) \
+		-e CAMPUS_DB_SSLMODE=require -e BI_DB_PASSWORD=$(AWSD_BI_DB_PASSWORD) grafana >/dev/null
+	@echo "Grafana (Aurora): http://localhost:3002   stop with: docker rm -f grafana-aurora"
+
+aws-demo: aws-bootstrap aws-load aws-dbt aws-check  ## AWS: all data steps after scripts/aws_demo.sh up

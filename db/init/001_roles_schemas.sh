@@ -9,7 +9,12 @@
 set -euo pipefail
 
 psql -v ON_ERROR_STOP=1 --username "$POSTGRES_USER" --dbname "$POSTGRES_DB" <<-SQL
-  CREATE EXTENSION IF NOT EXISTS timescaledb;
+  -- TimescaleDB where the platform offers it (local, Azure); plain PostgreSQL on Aurora (ADR 0007).
+  DO \$\$ BEGIN
+    IF EXISTS (SELECT 1 FROM pg_available_extensions WHERE name = 'timescaledb') THEN
+      CREATE EXTENSION IF NOT EXISTS timescaledb;
+    END IF;
+  END \$\$;
 
   CREATE ROLE ingest_writer LOGIN PASSWORD '${INGEST_DB_PASSWORD}';
   CREATE ROLE transformer   LOGIN PASSWORD '${TRANSFORM_DB_PASSWORD}';

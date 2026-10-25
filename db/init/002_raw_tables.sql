@@ -17,9 +17,15 @@ CREATE TABLE raw.meter_reading (
     ingested_at  timestamptz      NOT NULL DEFAULT now(),
     PRIMARY KEY (building_id, meter, ts)
 );
--- Classic signature: works on every TimescaleDB 2.x (Azure's managed version included).
--- On Aurora, which has no TimescaleDB, replace with native partitioning (ADR 0007).
-SELECT create_hypertable('raw.meter_reading', 'ts', chunk_time_interval => INTERVAL '30 days');
+-- Hypertable when TimescaleDB is installed (classic signature: any TimescaleDB 2.x, incl. Azure).
+-- Aurora has no TimescaleDB: the table stays a plain indexed table - fine at demo volume;
+-- production would use native range partitioning via pg_partman (ADR 0007).
+DO $$
+BEGIN
+    IF EXISTS (SELECT 1 FROM pg_extension WHERE extname = 'timescaledb') THEN
+        PERFORM create_hypertable('raw.meter_reading', 'ts', chunk_time_interval => INTERVAL '30 days');
+    END IF;
+END $$;
 CREATE INDEX ON raw.meter_reading (ingested_at DESC);
 
 -- Dead-letter table: messages that failed validation, kept for triage/replay.

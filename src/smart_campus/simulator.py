@@ -135,17 +135,30 @@ def main() -> None:
 
 
 class MqttPublisher:
-    """One MQTT message per reading (QoS 1)."""
+    """One MQTT message per reading (QoS 1).
+
+    Local Mosquitto: plain MQTT on 1883. AWS IoT Core: set MQTT_PORT=8883, MQTT_TLS_CERT and
+    MQTT_TLS_KEY (the device's X.509 certificate) and MQTT_CLIENT_ID to the IoT Thing name -
+    the IoT policy only lets a client connect under its own Thing name. MQTT_MAX_RATE throttles
+    publishes per second to stay under IoT Core's per-connection limit.
+    """
 
     def __init__(self, site_id: str):
-        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=f"simulator-{site_id}")
+        client_id = os.getenv("MQTT_CLIENT_ID", f"simulator-{site_id}")
+        self.client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION2, client_id=client_id)
+        if os.getenv("MQTT_TLS_CERT"):
+            self.client.tls_set(certfile=os.environ["MQTT_TLS_CERT"], keyfile=os.environ["MQTT_TLS_KEY"])
         self.client.connect(os.getenv("MQTT_HOST", "localhost"), int(os.getenv("MQTT_PORT", "1883")))
         self.client.loop_start()
+        max_rate = float(os.getenv("MQTT_MAX_RATE") or 0)
+        self.min_interval = 1.0 / max_rate if max_rate > 0 else 0.0
         self.last = None
 
     def publish(self, batch: list[tuple[str, bytes]]) -> None:
         for mqtt_topic, payload in batch:
             self.last = self.client.publish(mqtt_topic, payload, qos=1)
+            if self.min_interval:
+                time.sleep(self.min_interval)
 
     def close(self) -> None:
         if self.last is not None:

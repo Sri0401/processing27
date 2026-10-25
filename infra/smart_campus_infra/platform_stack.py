@@ -21,6 +21,7 @@ from aws_cdk import aws_iot as iot
 from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_rds as rds
+from aws_cdk import aws_budgets as budgets
 from aws_cdk import aws_s3 as s3
 from aws_cdk import aws_sns as sns
 from aws_cdk import aws_sns_subscriptions as subs
@@ -37,18 +38,19 @@ class SmartCampusPlatformStack(cdk.Stack):
         super().__init__(scope, construct_id, **kwargs)
         is_prod = env_name == "prod"
         removal = cdk.RemovalPolicy.RETAIN if is_prod else cdk.RemovalPolicy.DESTROY
+        # Demo-only: "<ip>/32" lets one workstation reach Aurora directly to bootstrap, load and
+        # run dbt. Never set for prod - there, use SSM Session Manager or a VPN into the VPC.
+        demo_db_access = self.node.try_get_context("demo_db_access")
+        if demo_db_access and is_prod:
+            raise ValueError("demo_db_access must not be used for prod")
 
         # ------------------------------------------------------------------ network
         # Private subnets only. No NAT gateway: the Lambda reaches S3 and Secrets Manager
         # through VPC endpoints, which is cheaper and keeps traffic off the internet.
-        vpc = ec2.Vpc(
-            self, "Vpc",
-            max_azs=2,
-            nat_gateways=0,
-            subnet_configuration=[
-                ec2.SubnetConfiguration(name="data", subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=24),
-            ],
-        )
+        subnets = [ec2.SubnetConfiguration(name="data", subnet_type=ec2.SubnetType.PRIVATE_ISOLATED, cidr_mask=24)]
+        if demo_db_access:  # public subnets (internet gateway only, still no NAT) to host a reachable DB
+            subnets.append(ec2.SubnetConfiguration(name="demo", subnet_type=ec2.SubnetType.PUBLIC, cidr_mask=24))
+        vpc = ec2.Vpc(self, "Vpc", max_azs=2, nat_gateways=0, subnet_configuration=subnets)
         vpc.add_gateway_endpoint("S3Endpoint", service=ec2.GatewayVpcEndpointAwsService.S3)
         vpc.add_interface_endpoint("SecretsEndpoint", service=ec2.InterfaceVpcEndpointAwsService.SECRETS_MANAGER)
 
@@ -85,11 +87,12 @@ class SmartCampusPlatformStack(cdk.Stack):
             engine=rds.DatabaseClusterEngine.aurora_postgres(version=rds.AuroraPostgresEngineVersion.VER_16_4),
             default_database_name="smart_campus",
             credentials=rds.Credentials.from_generated_secret("platform_admin"),
-            writer=rds.ClusterInstance.serverless_v2("writer"),
+            writer=rds.ClusterInstance.serverless_v2("writer", publicly_accessible=bool(demo_db_access)),
             serverless_v2_min_capacity=0.5,
             serverless_v2_max_capacity=4 if is_prod else 2,
             vpc=vpc,
-            vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
+            vpc_subnets=ec2.SubnetSelection(
+                subnet_type=ec2.SubnetType.PUBLIC if demo_db_access else ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[db_sg],
             storage_encrypted=True,
             iam_authentication=True,
@@ -102,23 +105,37 @@ class SmartCampusPlatformStack(cdk.Stack):
         # Least-privilege service credential for the ingest path (role created by db/init scripts).
         ingest_secret = rds.DatabaseSecret(self, "IngestDbSecret", username="ingest_writer",
                                            master_secret=cluster.secret)
+        if demo_db_access:
+            db_sg.add_ingress_rule(ec2.Peer.ipv4(demo_db_access), ec2.Port.tcp(5432), "demo workstation (temporary)")
 
         # ------------------------------------------------------------------ ingest Lambda
         lambda_sg = ec2.SecurityGroup(self, "IngestSg", vpc=vpc, description="Ingest Lambda")
         db_sg.add_ingress_rule(lambda_sg, ec2.Port.tcp(5432), "ingest Lambda to Aurora")
 
-        # Dependencies are pip-installed inside the Lambda build image (needs Docker).
-        # `-c skip_bundling=true` synthesises without Docker, e.g. in CI - never for deploys.
-        bundling = None if self.node.try_get_context("skip_bundling") else cdk.BundlingOptions(
-            image=lambda_.Runtime.PYTHON_3_12.bundling_image,
-            command=["bash", "-c", "pip install 'psycopg[binary]==3.2.3' -t /asset-output/python"],
-        )
+        # Lambda layer with psycopg (arm64). Three ways to build it:
+        #   -c layer_zip=<path>      prebuilt by `make lambda-layer` (no Docker needed by the CDK CLI)
+        #   default                  pip-installed inside the Lambda build image (needs Docker)
+        #   -c skip_bundling=true    no dependencies - synth/tests only, never for deploys
+        layer_zip = self.node.try_get_context("layer_zip")
+        if layer_zip:
+            layer_code = lambda_.Code.from_asset(layer_zip)
+        else:
+            bundling = None if self.node.try_get_context("skip_bundling") else cdk.BundlingOptions(
+                image=lambda_.Runtime.PYTHON_3_12.bundling_image,
+                platform="linux/arm64",
+                command=["bash", "-c", "pip install 'psycopg[binary]==3.2.3' -t /asset-output/python"],
+            )
+            layer_code = lambda_.Code.from_asset(str(LAMBDA_SRC), bundling=bundling)
         deps_layer = lambda_.LayerVersion(
             self, "IngestDeps",
             description="psycopg for the ingest Lambda",
             compatible_runtimes=[lambda_.Runtime.PYTHON_3_12],
-            code=lambda_.Code.from_asset(str(LAMBDA_SRC), bundling=bundling),
+            compatible_architectures=[lambda_.Architecture.ARM_64],
+            code=layer_code,
         )
+        # New accounts often have a Lambda concurrency quota of 10, which leaves nothing to reserve.
+        reserved = self.node.try_get_context("lambda_reserved_concurrency")
+        reserved_concurrency = 20 if reserved is None else (int(reserved) or None)
 
         ingest_fn = lambda_.Function(
             self, "IngestFunction",
@@ -130,7 +147,7 @@ class SmartCampusPlatformStack(cdk.Stack):
             memory_size=256,
             timeout=cdk.Duration.seconds(30),
             # Caps DB connections from Lambda; Aurora Serverless v2 at 0.5 ACU allows ~100.
-            reserved_concurrent_executions=20,
+            reserved_concurrent_executions=reserved_concurrency,
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(subnet_type=ec2.SubnetType.PRIVATE_ISOLATED),
             security_groups=[lambda_sg],
@@ -192,6 +209,31 @@ class SmartCampusPlatformStack(cdk.Stack):
             },
         )
 
+        # A site gateway (one BMS head-end forwarding for many buildings) may publish for every
+        # building of the site stored in its Thing attributes - and for no other site.
+        gateway_policy = iot.CfnPolicy(
+            self, "SiteGatewayPolicy",
+            policy_name=f"smart-campus-{env_name}-site-gateway",
+            policy_document={
+                "Version": "2012-10-17",
+                "Statement": [
+                    {"Effect": "Allow", "Action": "iot:Connect",
+                     "Resource": f"arn:aws:iot:{self.region}:{self.account}:client/"
+                                 "${iot:Connection.Thing.ThingName}"},
+                    {"Effect": "Allow", "Action": "iot:Publish",
+                     "Resource": f"arn:aws:iot:{self.region}:{self.account}:topic/campus/"
+                                 "${iot:Connection.Thing.Attributes[site]}/*"},
+                ],
+            },
+        )
+        gateway = iot.CfnThing(
+            self, "SiteGateway",
+            thing_name=f"{site_id.lower()}-gateway-{env_name}",
+            attribute_payload=iot.CfnThing.AttributePayloadProperty(attributes={"site": site_id}),
+        )
+        # The gateway's X.509 certificate is created and attached by scripts/aws_demo.sh, so the
+        # private key never passes through CloudFormation.
+
         # ------------------------------------------------------------------ monitoring
         alarm_topic = sns.Topic(self, "PlatformAlarms", display_name="Smart Campus platform alarms")
         if alarm_email:
@@ -218,8 +260,36 @@ class SmartCampusPlatformStack(cdk.Stack):
         )
         silence.add_alarm_action(notify)
 
+        # ------------------------------------------------------------------ cost guardrail
+        # Emails at the first cent of real (post-credit) spend. AWS Budgets is free for 2 budgets.
+        budget_email = self.node.try_get_context("budget_email")
+        if budget_email:
+            budgets.CfnBudget(
+                self, "ZeroSpendBudget",
+                budget=budgets.CfnBudget.BudgetDataProperty(
+                    budget_name=f"smart-campus-{env_name}-zero-spend",
+                    budget_type="COST",
+                    time_unit="MONTHLY",
+                    budget_limit=budgets.CfnBudget.SpendProperty(amount=1, unit="USD"),
+                    cost_types=budgets.CfnBudget.CostTypesProperty(include_credit=False),
+                ),
+                notifications_with_subscribers=[
+                    budgets.CfnBudget.NotificationWithSubscribersProperty(
+                        notification=budgets.CfnBudget.NotificationProperty(
+                            notification_type="ACTUAL", comparison_operator="GREATER_THAN",
+                            threshold=1, threshold_type="PERCENTAGE"),  # 1% of $1 = $0.01
+                        subscribers=[budgets.CfnBudget.SubscriberProperty(
+                            subscription_type="EMAIL", address=budget_email)],
+                    ),
+                ],
+            )
+
         # ------------------------------------------------------------------ outputs
         cdk.CfnOutput(self, "RawBucketName", value=raw_bucket.bucket_name)
         cdk.CfnOutput(self, "ClusterEndpoint", value=cluster.cluster_endpoint.hostname)
+        cdk.CfnOutput(self, "AdminSecretArn", value=cluster.secret.secret_arn)
+        cdk.CfnOutput(self, "IngestSecretArn", value=ingest_secret.secret_arn)
         cdk.CfnOutput(self, "IngestFunctionName", value=ingest_fn.function_name)
         cdk.CfnOutput(self, "TelemetryRuleName", value=rule.ref)
+        cdk.CfnOutput(self, "GatewayThingName", value=gateway.ref)
+        cdk.CfnOutput(self, "GatewayPolicyName", value=gateway_policy.ref)
