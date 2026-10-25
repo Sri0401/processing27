@@ -52,7 +52,8 @@ deploy() {
   az group create -n "$RG" -l "$LOCATION" --tags project=smart-campus environment="$ENV_NAME" -o none
 
   local params="$STATE/params.json"
-  trap 'rm -f "$params"' EXIT
+  # Expanded now (double quotes): the trap runs after this function's locals are gone.
+  trap "rm -f '$params'" EXIT
   umask 077
   cat > "$params" <<JSON
 {
@@ -73,6 +74,7 @@ deploy() {
 JSON
   log "Deploying infra-azure/main.bicep (deployApps=$deploy_apps)"
   az deployment group create -g "$RG" -n "$DEPLOYMENT" -f infra-azure/main.bicep -p "@$params" -o none
+  rm -f "$params"  # contains secrets: remove as soon as it has been used
   write_outputs
 
   # TimescaleDB is loaded via shared_preload_libraries, which only takes effect after a restart.

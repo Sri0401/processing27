@@ -24,8 +24,8 @@ param deployerIp string
 @description('Email for budget alerts.')
 param alertEmail string
 
-@description('Monthly budget for this resource group, in the billing currency.')
-param monthlyBudget int = 10
+@description('Monthly budget for this resource group, in the billing currency. Everything here is meant to be free, so any spend at all should raise an alert.')
+param monthlyBudget int = 1
 
 @description('First day of the current month (budgets must start on the 1st).')
 param budgetStartDate string = utcNow('yyyy-MM-01')
@@ -83,7 +83,8 @@ resource logs 'Microsoft.OperationalInsights/workspaces@2022-10-01' = {
   properties: {
     sku: { name: 'PerGB2018' }
     retentionInDays: 30
-    workspaceCapping: { dailyQuotaGb: json('0.2') } // hard cap: logs can never become the bill
+    // Hard cap: 0.15 GB/day x 31 days = 4.65 GB < the 5 GB/month free allowance.
+    workspaceCapping: { dailyQuotaGb: json('0.15') }
   }
 }
 
@@ -323,7 +324,8 @@ resource grafanaApp 'Microsoft.App/containerApps@2024-03-01' = if (deployApps) {
         {
           name: 'grafana'
           image: grafanaImage
-          resources: { cpu: json('0.5'), memory: '1Gi' }
+          // Smallest size: a public URL may be woken by bots, so stretch the free grant (~200 active h/month).
+          resources: { cpu: json('0.25'), memory: '0.5Gi' }
           env: [
             { name: 'CAMPUS_DB_HOST', value: postgres.properties.fullyQualifiedDomainName }
             { name: 'CAMPUS_DB_SSLMODE', value: 'require' }
