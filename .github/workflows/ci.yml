@@ -1,0 +1,80 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-test:
+    name: Lint + unit tests
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: ruff check .
+      - run: pytest -q
+
+  warehouse:
+    name: Pipeline + dbt integration
+    runs-on: ubuntu-24.04
+    needs: lint-test
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache BDG2 source files
+        uses: actions/cache@v4
+        with:
+          path: data/raw/bdg2
+          key: bdg2-${{ hashFiles('scripts/download_bdg2.sh') }}
+      - run: make data
+      - run: make env up
+      # A two-month slice keeps CI fast while exercising every model and test.
+      - run: make extract load synthetic
+      - run: make backfill BACKFILL_UNTIL=2016-03-01
+      - run: make dbt
+      - name: Dashboard SQL smoke test (as bi_reader)
+        run: |
+          docker compose run --rm tools python dashboards/build_dashboards.py
+          git diff --exit-code dashboards/grafana/dashboards  # generated JSON must be committed
+          docker compose run --rm tools python dashboards/check_dashboards.py
+      - name: Stream smoke test (simulator -> MQTT -> ingest -> Postgres)
+        run: |
+          docker compose --profile sim run --rm simulator \
+            python -m smart_campus.simulator --start 2016-03-01T00:00:00Z --hours 6 --speedup 6
+          sleep 5
+          test "$(docker compose exec -T db psql -U platform_admin -d smart_campus -tAc \
+            "select count(*) from raw.meter_reading where source = 'stream'")" -gt 1000
+      - if: failure()
+        run: docker compose logs --tail 200
+
+  infra:
+    name: CDK tests + synth
+    runs-on: ubuntu-24.04
+    needs: lint-test
+    defaults:
+      run:
+        working-directory: infra
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - run: pip install -r requirements.txt
+      - run: python -m pytest -q tests  # `-m` puts infra/ on sys.path
+      - run: npx -y aws-cdk@2.170.0 synth --quiet -c skip_bundling=true
+      - uses: actions/upload-artifact@v4
+        with:
+          name: cloudformation-template
+          path: infra/cdk.out/*.template.json

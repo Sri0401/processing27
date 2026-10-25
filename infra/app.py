@@ -8,7 +8,6 @@
 import os
 
 import aws_cdk as cdk
-
 from smart_campus_infra.platform_stack import SmartCampusPlatformStack
 
 app = cdk.App()

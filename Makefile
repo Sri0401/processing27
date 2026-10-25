@@ -36,8 +36,9 @@ extract:  ## BDG2 wide CSV -> tidy Parquet for $$SITE_ID
 load:  ## Load building metadata + weather into raw
 	$(TOOLS) python -m smart_campus.load reference
 
-backfill:  ## Bulk-load history before the stream start date
-	$(TOOLS) python -m smart_campus.load backfill --until 2017-07-01
+BACKFILL_UNTIL ?= 2017-07-01
+backfill:  ## Bulk-load history before the stream start date (BACKFILL_UNTIL=YYYY-MM-DD)
+	$(TOOLS) python -m smart_campus.load backfill --until $(BACKFILL_UNTIL)
 
 synthetic:  ## Generate + load synthetic estates data (assets, work orders, audits)
 	$(TOOLS) python -m smart_campus.synthetic

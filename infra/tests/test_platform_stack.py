@@ -3,7 +3,6 @@
 import aws_cdk as cdk
 import pytest
 from aws_cdk.assertions import Match, Template
-
 from smart_campus_infra.platform_stack import TELEMETRY_TOPIC, SmartCampusPlatformStack
 
 

@@ -183,7 +183,8 @@ class SmartCampusPlatformStack(cdk.Stack):
                 "Version": "2012-10-17",
                 "Statement": [
                     {"Effect": "Allow", "Action": "iot:Connect",
-                     "Resource": f"arn:aws:iot:{self.region}:{self.account}:client/${{iot:Connection.Thing.ThingName}}"},
+                     "Resource": f"arn:aws:iot:{self.region}:{self.account}:client/"
+                                 "${iot:Connection.Thing.ThingName}"},
                     {"Effect": "Allow", "Action": "iot:Publish",
                      "Resource": f"arn:aws:iot:{self.region}:{self.account}:topic/campus/{site_id}/"
                                  "${iot:Connection.Thing.ThingName}/*"},

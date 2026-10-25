@@ -5,7 +5,7 @@
 Grafana provisions the generated files read-only (allowUiUpdates: false), so every
 dashboard change goes through version control and review, like any other code.
 
-Design rules applied throughout (see docs/dashboard-design.md):
+Design rules applied throughout (see docs/adr/0006-dashboards-as-code.md):
   * each meter keeps one fixed colour everywhere (electricity blue, gas orange)
   * status colours (green/amber/red) are reserved for RAG and always shown with a label
   * one y-axis per chart; headline numbers are stat tiles, not charts
@@ -117,7 +117,8 @@ def barchart(lay: Layout, title: str, sql: str, unit: str, description: str, ser
         "options": {"orientation": "horizontal" if horizontal else "vertical", "barWidth": 0.8,
                     "groupWidth": 0.75, "stacking": "normal" if stacked else "none",
                     "showValue": "never", "xTickLabelRotation": 0, "xTickLabelSpacing": 60,
-                    "legend": {"showLegend": len(series) > 1, "displayMode": "list", "placement": "bottom", "calcs": []},
+                    "legend": {"showLegend": len(series) > 1, "displayMode": "list",
+                               "placement": "bottom", "calcs": []},
                     "tooltip": {"mode": "multi"}},
     }
 
@@ -406,7 +407,7 @@ def main() -> None:
     OUT.mkdir(parents=True, exist_ok=True)
     for d in (energy_dashboard(), estates_dashboard(), platform_dashboard()):
         path = OUT / f"{d['uid']}.json"
-        path.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+        path.write_text(json.dumps(d, indent=2, ensure_ascii=False) + "\n", encoding="utf-8", newline="\n")
         print(f"wrote {path} ({len(d['panels'])} panels)")
 
 
