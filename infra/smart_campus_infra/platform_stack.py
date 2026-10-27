@@ -23,7 +23,9 @@ from aws_cdk import aws_lambda as lambda_
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_rds as rds
 from aws_cdk import aws_s3 as s3
+from aws_cdk import aws_lambda_destinations as destinations
 from aws_cdk import aws_sns as sns
+from aws_cdk import aws_sqs as sqs
 from aws_cdk import aws_sns_subscriptions as subs
 from constructs import Construct
 
@@ -121,7 +123,7 @@ class SmartCampusPlatformStack(cdk.Stack):
                 cfn_cluster = cluster.node.default_child
                 cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.MinCapacity", 0)
                 cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.SecondsUntilAutoPause", 300)
-            db_secret, db_host = cluster.secret, cluster.cluster_endpoint.hostname
+            db_secret, db_host, db_target = cluster.secret, cluster.cluster_endpoint.hostname, cluster
         else:
             if is_prod:
                 raise ValueError("warehouse=rds is for Free-plan demos; prod uses Aurora")
@@ -149,11 +151,14 @@ class SmartCampusPlatformStack(cdk.Stack):
                 cloudwatch_logs_exports=["postgresql"],
                 cloudwatch_logs_retention=logs.RetentionDays.ONE_WEEK,
             )
-            db_secret, db_host = instance.secret, instance.db_instance_endpoint_address
+            db_secret, db_host, db_target = instance.secret, instance.db_instance_endpoint_address, instance
 
         # Least-privilege service credential for the ingest path (role created by db/init scripts).
         ingest_secret = rds.DatabaseSecret(self, "IngestDbSecret", username="ingest_writer",
                                            master_secret=db_secret)
+        # Attaching adds host / port / dbname to the secret - without it the Lambda has a password
+        # but nowhere to connect (found on the first live run: KeyError 'host').
+        ingest_secret = ingest_secret.attach(db_target)
         if demo_db_access:
             db_sg.add_ingress_rule(ec2.Peer.ipv4(demo_db_access), ec2.Port.tcp(5432), "demo workstation (temporary)")
 
@@ -186,8 +191,19 @@ class SmartCampusPlatformStack(cdk.Stack):
         reserved = self.node.try_get_context("lambda_reserved_concurrency")
         reserved_concurrency = 20 if reserved is None else (int(reserved) or None)
 
+        # Messages that still fail after Lambda's async retries land here instead of being dropped
+        # (the handler may fail before it can archive to S3). Replay with `sqs receive-message`.
+        ingest_dlq = sqs.Queue(
+            self, "IngestDeadLetters",
+            encryption=sqs.QueueEncryption.SQS_MANAGED,
+            enforce_ssl=True,
+            retention_period=cdk.Duration.days(14),
+        )
+
         ingest_fn = lambda_.Function(
             self, "IngestFunction",
+            retry_attempts=2,
+            on_failure=destinations.SqsDestination(ingest_dlq),
             runtime=lambda_.Runtime.PYTHON_3_12,
             architecture=lambda_.Architecture.ARM_64,
             handler="handler.handler",
@@ -292,6 +308,8 @@ class SmartCampusPlatformStack(cdk.Stack):
         alarms = {
             "IngestErrors": ingest_fn.metric_errors(period=cdk.Duration.minutes(5)),
             "IngestThrottles": ingest_fn.metric_throttles(period=cdk.Duration.minutes(5)),
+            "DeadLetterDepth": ingest_dlq.metric_approximate_number_of_messages_visible(
+                period=cdk.Duration.minutes(5), statistic="Maximum"),
         }
         for name, metric in alarms.items():
             alarm = cloudwatch.Alarm(self, name, metric=metric, threshold=1, evaluation_periods=1,

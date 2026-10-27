@@ -58,7 +58,7 @@ def test_ingest_lambda_is_in_vpc_with_capped_concurrency(template):
 
 
 def test_alarms_exist(template):
-    template.resource_count_is("AWS::CloudWatch::Alarm", 3)
+    template.resource_count_is("AWS::CloudWatch::Alarm", 4)
 
 
 def synth(env_name: str = "dev", **context) -> Template:
@@ -131,3 +131,16 @@ def test_free_plan_demo_uses_free_tier_rds_postgres():
 def test_rds_warehouse_is_refused_for_prod():
     with pytest.raises(ValueError, match="prod uses Aurora"):
         synth(warehouse="rds", env_name="prod")
+
+
+def test_ingest_secret_is_attached_so_it_carries_the_db_host(template):
+    """Regression: an unattached DatabaseSecret has no host - the live Lambda failed with KeyError 'host'."""
+    template.resource_count_is("AWS::SecretsManager::SecretTargetAttachment", 2)  # admin + ingest
+
+
+def test_failed_ingest_events_go_to_an_encrypted_dead_letter_queue(template):
+    template.has_resource_properties("AWS::SQS::Queue", {"SqsManagedSseEnabled": True})
+    template.has_resource_properties("AWS::Lambda::EventInvokeConfig", {
+        "MaximumRetryAttempts": 2,
+        "DestinationConfig": {"OnFailure": {"Destination": Match.any_value()}},
+    })
