@@ -6,7 +6,7 @@ An end-to-end data platform that brings **building-systems (OT) telemetry** and 
 2. **Assets:** which assets are failing, what is the maintenance backlog, and where should capital go first?
 3. **Accessibility:** which buildings fall short, and what would it cost to fix them?
 
-The platform is designed for **AWS** (IoT Core → Lambda → Aurora PostgreSQL, defined in **AWS CDK**), is **deployed live on Azure** (Container Apps + PostgreSQL, defined in **Bicep**), and runs **entirely locally on free, open-source stand-ins** (Mosquitto, TimescaleDB, SeaweedFS, Grafana). The same ingest code runs in all three.
+The platform is designed for **AWS** (IoT Core → Lambda → Aurora PostgreSQL, defined in **AWS CDK**, and deployed briefly for a live end-to-end run), is **deployed live on Azure** (Container Apps + PostgreSQL, defined in **Bicep**), and runs **entirely locally on free, open-source stand-ins** (Mosquitto, TimescaleDB, SeaweedFS, Grafana). The same ingest code runs in all three.
 
 | | |
 |---|---|
@@ -136,6 +136,22 @@ Full write-up for estates colleagues: [docs/stakeholder-brief.md](docs/stakehold
 - **Data quality:** **18% of historical readings are flagged and excluded**, mostly long flat-line gap-fills in the source data. These are surfaced on the Platform Health dashboard rather than hidden.
 
 > Estates figures (assets, work orders, audits) come from **synthetic** data generated to plausible sector patterns. Energy figures come from real BDG2 meter data. Tariffs and carbon factors are editable reference data ([`seeds/`](warehouse/dbt/seeds)).
+
+<details>
+<summary>Deployed on AWS: CDK stack → IoT Core rule → Lambda → RDS PostgreSQL (brief live demo)</summary>
+
+Deployed with `scripts/aws_demo.sh` on a Free-plan account, verified end to end, then torn down ([ADR 0009](docs/adr/0009-aws-demo-deployment.md)). 24 simulated hours were published over **MQTT/TLS with an X.509 device certificate**. IoT Core invoked the Lambda, which wrote **6,036 readings** to RDS and archived every message to S3. Malformed JSON that IoT Core could not parse was preserved by the rule's S3 error action. On RDS, dbt passed 89/89 and the dashboards show the same figures as locally and on Azure.
+
+The first live run found a real bug that the template tests had missed: the ingest secret was not attached to the database, so it had no host. It was fixed, a regression test was added, and an SQS dead-letter queue was introduced so that failed events can no longer be dropped.
+
+| | |
+|---|---|
+| ![CloudFormation stack](docs/images/aws-cloudformation.png) | ![IoT Core rule](docs/images/aws-iot-rule.png) |
+| ![Lambda functions](docs/images/aws-lambda.png) | ![RDS metrics during the load](docs/images/aws-rds.png) |
+
+![Dashboards reading the AWS warehouse](docs/images/dashboard-aws-rds.png)
+
+</details>
 
 <details>
 <summary>The same dashboard served live from Azure Container Apps + Azure PostgreSQL</summary>
