@@ -80,47 +80,86 @@ class SmartCampusPlatformStack(cdk.Stack):
             ],
         )
 
-        # ------------------------------------------------------------------ Aurora PostgreSQL
-        db_sg = ec2.SecurityGroup(self, "DbSg", vpc=vpc, description="Aurora - ingress from platform compute only",
+        # ------------------------------------------------------------------ warehouse (PostgreSQL)
+        # Default: Aurora PostgreSQL Serverless v2. `-c warehouse=rds` uses a single-AZ RDS PostgreSQL
+        # db.t4g.micro instead: AWS Free-plan accounts cannot create Aurora through CloudFormation
+        # (it requires "express configuration", a CLI-only option). Same engine major, SQL and dbt.
+        warehouse = self.node.try_get_context("warehouse") or "aurora"
+        if warehouse not in ("aurora", "rds"):
+            raise ValueError(f"unknown warehouse {warehouse!r}: use 'aurora' or 'rds'")
+        db_sg = ec2.SecurityGroup(self, "DbSg", vpc=vpc, description="Warehouse - ingress from platform compute only",
                                   allow_all_outbound=False)
-        cluster = rds.DatabaseCluster(
-            self, "Warehouse",
-            # Pinned explicitly: AWS retires minor versions (16.4 is gone), newer than this CDK's constants.
-            engine=rds.DatabaseClusterEngine.aurora_postgres(
-                version=rds.AuroraPostgresEngineVersion.of(AURORA_VERSION, "16")),
-            default_database_name="smart_campus",
-            credentials=rds.Credentials.from_generated_secret("platform_admin"),
-            writer=rds.ClusterInstance.serverless_v2("writer", publicly_accessible=bool(demo_db_access)),
-            serverless_v2_min_capacity=1 if is_prod else 0.5,
-            serverless_v2_max_capacity=4 if is_prod else 2,
-            vpc=vpc,
-            vpc_subnets=ec2.SubnetSelection(
-                subnet_type=ec2.SubnetType.PUBLIC if demo_db_access else ec2.SubnetType.PRIVATE_ISOLATED),
-            security_groups=[db_sg],
-            storage_encrypted=True,
-            iam_authentication=True,
-            backup=rds.BackupProps(retention=cdk.Duration.days(14 if is_prod else 1)),
-            deletion_protection=is_prod,
-            removal_policy=cdk.RemovalPolicy.SNAPSHOT if is_prod else cdk.RemovalPolicy.DESTROY,
-            cloudwatch_logs_exports=["postgresql"],
-            cloudwatch_logs_retention=logs.RetentionDays.ONE_MONTH,
-        )
-        if not is_prod:
-            # Escape hatch: 0 ACU = auto-pause after 5 idle minutes (Aurora PostgreSQL 16.3+), so a
-            # dev/demo cluster costs no compute between uses. This CDK version still validates >= 0.5.
-            cfn_cluster = cluster.node.default_child
-            cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.MinCapacity", 0)
-            cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.SecondsUntilAutoPause", 300)
+        db_subnets = ec2.SubnetSelection(
+            subnet_type=ec2.SubnetType.PUBLIC if demo_db_access else ec2.SubnetType.PRIVATE_ISOLATED)
+        credentials = rds.Credentials.from_generated_secret("platform_admin")
+
+        if warehouse == "aurora":
+            cluster = rds.DatabaseCluster(
+                self, "Warehouse",
+                # Pinned explicitly: AWS retires minor versions (16.4 is gone), newer than this CDK's constants.
+                engine=rds.DatabaseClusterEngine.aurora_postgres(
+                    version=rds.AuroraPostgresEngineVersion.of(AURORA_VERSION, "16")),
+                default_database_name="smart_campus",
+                credentials=credentials,
+                writer=rds.ClusterInstance.serverless_v2("writer", publicly_accessible=bool(demo_db_access)),
+                serverless_v2_min_capacity=1 if is_prod else 0.5,
+                serverless_v2_max_capacity=4 if is_prod else 2,
+                vpc=vpc,
+                vpc_subnets=db_subnets,
+                security_groups=[db_sg],
+                storage_encrypted=True,
+                iam_authentication=True,
+                backup=rds.BackupProps(retention=cdk.Duration.days(14 if is_prod else 1)),
+                deletion_protection=is_prod,
+                removal_policy=cdk.RemovalPolicy.SNAPSHOT if is_prod else cdk.RemovalPolicy.DESTROY,
+                cloudwatch_logs_exports=["postgresql"],
+                cloudwatch_logs_retention=logs.RetentionDays.ONE_MONTH,
+            )
+            if not is_prod:
+                # Escape hatch: 0 ACU = auto-pause after 5 idle minutes (Aurora PostgreSQL 16.3+), so a
+                # dev/demo cluster costs no compute between uses. This CDK version still validates >= 0.5.
+                cfn_cluster = cluster.node.default_child
+                cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.MinCapacity", 0)
+                cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.SecondsUntilAutoPause", 300)
+            db_secret, db_host = cluster.secret, cluster.cluster_endpoint.hostname
+        else:
+            if is_prod:
+                raise ValueError("warehouse=rds is for Free-plan demos; prod uses Aurora")
+            instance = rds.DatabaseInstance(
+                self, "WarehouseInstance",
+                engine=rds.DatabaseInstanceEngine.postgres(
+                    version=rds.PostgresEngineVersion.of(AURORA_VERSION, "16")),
+                instance_type=ec2.InstanceType.of(ec2.InstanceClass.T4G, ec2.InstanceSize.MICRO),  # free tier
+                allocated_storage=20,                                                              # free tier
+                storage_type=rds.StorageType.GP2,
+                multi_az=False,
+                database_name="smart_campus",
+                credentials=credentials,
+                vpc=vpc,
+                vpc_subnets=db_subnets,
+                publicly_accessible=bool(demo_db_access),
+                security_groups=[db_sg],
+                storage_encrypted=True,
+                iam_authentication=True,
+                backup_retention=cdk.Duration.days(1),
+                delete_automated_backups=True,
+                deletion_protection=False,
+                removal_policy=cdk.RemovalPolicy.DESTROY,
+                enable_performance_insights=False,
+                cloudwatch_logs_exports=["postgresql"],
+                cloudwatch_logs_retention=logs.RetentionDays.ONE_WEEK,
+            )
+            db_secret, db_host = instance.secret, instance.db_instance_endpoint_address
 
         # Least-privilege service credential for the ingest path (role created by db/init scripts).
         ingest_secret = rds.DatabaseSecret(self, "IngestDbSecret", username="ingest_writer",
-                                           master_secret=cluster.secret)
+                                           master_secret=db_secret)
         if demo_db_access:
             db_sg.add_ingress_rule(ec2.Peer.ipv4(demo_db_access), ec2.Port.tcp(5432), "demo workstation (temporary)")
 
         # ------------------------------------------------------------------ ingest Lambda
         lambda_sg = ec2.SecurityGroup(self, "IngestSg", vpc=vpc, description="Ingest Lambda")
-        db_sg.add_ingress_rule(lambda_sg, ec2.Port.tcp(5432), "ingest Lambda to Aurora")
+        db_sg.add_ingress_rule(lambda_sg, ec2.Port.tcp(5432), "ingest Lambda to warehouse")
 
         # Lambda layer with psycopg (arm64). Three ways to build it:
         #   -c layer_zip=<path>      prebuilt by `make lambda-layer` (no Docker needed by the CDK CLI)
@@ -296,8 +335,8 @@ class SmartCampusPlatformStack(cdk.Stack):
 
         # ------------------------------------------------------------------ outputs
         cdk.CfnOutput(self, "RawBucketName", value=raw_bucket.bucket_name)
-        cdk.CfnOutput(self, "ClusterEndpoint", value=cluster.cluster_endpoint.hostname)
-        cdk.CfnOutput(self, "AdminSecretArn", value=cluster.secret.secret_arn)
+        cdk.CfnOutput(self, "ClusterEndpoint", value=db_host)
+        cdk.CfnOutput(self, "AdminSecretArn", value=db_secret.secret_arn)
         cdk.CfnOutput(self, "IngestSecretArn", value=ingest_secret.secret_arn)
         cdk.CfnOutput(self, "IngestFunctionName", value=ingest_fn.function_name)
         cdk.CfnOutput(self, "TelemetryRuleName", value=rule.ref)

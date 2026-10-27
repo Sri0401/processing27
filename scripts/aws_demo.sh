@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # Brief AWS deployment of the CDK stack for a live demo - then tear it all down.
+# Uses the Free-plan-compatible warehouse (RDS PostgreSQL db.t4g.micro) - see ADR 0009.
 # Needs: AWS CLI v2 (logged in), Node.js (for npx aws-cdk), the infra Python deps, and
 # build/ingest-deps-arm64.zip from `make lambda-layer`.
 #
@@ -56,7 +57,7 @@ up() {
 
   log "Deploying $STACK"
   (cd infra && $CDK deploy "$STACK" --require-approval never \
-      -c demo_db_access="$ip" -c layer_zip="../$LAYER_ZIP" -c lambda_reserved_concurrency=0 \
+      -c warehouse=rds -c demo_db_access="$ip" -c layer_zip="../$LAYER_ZIP" -c lambda_reserved_concurrency=0 \
       -c budget_email="$BUDGET_EMAIL" -c alarm_email="$BUDGET_EMAIL" \
       --outputs-file "../$STATE/cdk-outputs.json")
   write_outputs
@@ -143,7 +144,7 @@ down() {
   aws cloudformation wait stack-delete-complete --stack-name "$STACK"
 
   log "Deleting log groups left behind by Lambda / RDS"
-  for prefix in "/aws/lambda/$STACK" "/aws/rds/cluster/smartcampus"; do
+  for prefix in "/aws/lambda/$STACK" "/aws/rds/cluster/smartcampus" "/aws/rds/instance/smartcampus"; do
     for group in $(aws_text logs describe-log-groups --log-group-name-prefix "$prefix" --query 'logGroups[].logGroupName'); do
       aws logs delete-log-group --log-group-name "$group" && echo "  deleted $group"
     done

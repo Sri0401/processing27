@@ -117,3 +117,17 @@ def test_dev_aurora_scales_to_zero_on_a_current_engine_version(template):
         "EngineVersion": "16.15",
         "ServerlessV2ScalingConfiguration": {"MinCapacity": 0, "MaxCapacity": 2, "SecondsUntilAutoPause": 300},
     })
+
+
+def test_free_plan_demo_uses_free_tier_rds_postgres():
+    t = synth(warehouse="rds", demo_db_access="203.0.113.7/32")
+    t.resource_count_is("AWS::RDS::DBCluster", 0)
+    t.has_resource_properties("AWS::RDS::DBInstance", {
+        "DBInstanceClass": "db.t4g.micro", "Engine": "postgres", "EngineVersion": "16.15",
+        "AllocatedStorage": "20", "MultiAZ": False, "StorageEncrypted": True, "PubliclyAccessible": True,
+    })
+
+
+def test_rds_warehouse_is_refused_for_prod():
+    with pytest.raises(ValueError, match="prod uses Aurora"):
+        synth(warehouse="rds", env_name="prod")
