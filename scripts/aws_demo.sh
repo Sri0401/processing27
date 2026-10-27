@@ -33,6 +33,14 @@ py() { "$(command -v python3 || command -v python)" "$@"; }
 
 random_secret() { printf 'Aa1%s' "$(openssl rand -base64 48 | tr -dc 'A-Za-z0-9' | head -c 29)"; }
 
+# The CDK CLI cannot read newer AWS CLI sign-in types (e.g. `aws login`); hand it the session's
+# temporary credentials through environment variables (memory only, never written to disk).
+export_session_credentials() {
+  if [[ -z "${AWS_ACCESS_KEY_ID:-}" ]]; then
+    eval "$(aws configure export-credentials --format env | tr -d '\r')"
+  fi
+}
+
 up() {
   : "${BUDGET_EMAIL:?set BUDGET_EMAIL to the address for the zero-spend budget alert}"
   [[ -f "$LAYER_ZIP" ]] || { echo "Missing $LAYER_ZIP - run 'make lambda-layer' (in WSL/Linux) first"; exit 1; }
@@ -41,6 +49,7 @@ up() {
   account=$(aws_text sts get-caller-identity --query Account)
   ip="$(curl -fsS https://checkip.amazonaws.com | tr -d '\r\n')/32"
   log "Account $account, region $REGION, demo DB access for $ip only"
+  export_session_credentials
 
   log "CDK bootstrap (staging bucket for assets; removed again by 'down')"
   (cd infra && $CDK bootstrap "aws://$account/$REGION" --require-approval never)
