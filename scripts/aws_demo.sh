@@ -90,13 +90,20 @@ secret_password() {  # password field of an RDS-format Secrets Manager secret
 write_secrets() {
   # shellcheck disable=SC1090
   source "$OUTPUTS"
+  # Keep passwords from an earlier run: those roles may already exist in the database.
+  local transform="" bi=""
+  if [[ -f "$SECRETS" ]]; then
+    # shellcheck disable=SC1090
+    source "$SECRETS"
+    transform="${AWSD_TRANSFORM_DB_PASSWORD:-}" bi="${AWSD_BI_DB_PASSWORD:-}"
+  fi
   umask 077
   {
     echo "AWSD_ADMIN_PASSWORD=$(secret_password "$AWSD_ADMIN_SECRET_ARN")"
     echo "AWSD_INGEST_DB_PASSWORD=$(secret_password "$AWSD_INGEST_SECRET_ARN")"
     # dbt and BI roles are only used from this machine during the demo
-    echo "AWSD_TRANSFORM_DB_PASSWORD=$(random_secret)"
-    echo "AWSD_BI_DB_PASSWORD=$(random_secret)"
+    echo "AWSD_TRANSFORM_DB_PASSWORD=${transform:-$(random_secret)}"
+    echo "AWSD_BI_DB_PASSWORD=${bi:-$(random_secret)}"
   } > "$SECRETS"
   log "Database credentials written to $SECRETS"
 }
