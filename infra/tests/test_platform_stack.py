@@ -110,3 +110,10 @@ def test_site_gateway_may_only_publish_for_its_own_site(template):
             "Action": "iot:Publish",
             "Resource": Match.string_like_regexp(r"topic/campus/\$\{iot:Connection\.Thing\.Attributes\[site\]\}/\*"),
         })])}})
+
+
+def test_dev_aurora_scales_to_zero_on_a_current_engine_version(template):
+    template.has_resource_properties("AWS::RDS::DBCluster", {
+        "EngineVersion": "16.15",
+        "ServerlessV2ScalingConfiguration": {"MinCapacity": 0, "MaxCapacity": 2, "SecondsUntilAutoPause": 300},
+    })

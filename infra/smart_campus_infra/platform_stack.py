@@ -30,6 +30,7 @@ from constructs import Construct
 REPO_ROOT = Path(__file__).resolve().parents[2]
 LAMBDA_SRC = REPO_ROOT / "lambdas" / "ingest"
 TELEMETRY_TOPIC = "campus/+/+/+/telemetry"
+AURORA_VERSION = "16.15"
 
 
 class SmartCampusPlatformStack(cdk.Stack):
@@ -84,11 +85,13 @@ class SmartCampusPlatformStack(cdk.Stack):
                                   allow_all_outbound=False)
         cluster = rds.DatabaseCluster(
             self, "Warehouse",
-            engine=rds.DatabaseClusterEngine.aurora_postgres(version=rds.AuroraPostgresEngineVersion.VER_16_4),
+            # Pinned explicitly: AWS retires minor versions (16.4 is gone), newer than this CDK's constants.
+            engine=rds.DatabaseClusterEngine.aurora_postgres(
+                version=rds.AuroraPostgresEngineVersion.of(AURORA_VERSION, "16")),
             default_database_name="smart_campus",
             credentials=rds.Credentials.from_generated_secret("platform_admin"),
             writer=rds.ClusterInstance.serverless_v2("writer", publicly_accessible=bool(demo_db_access)),
-            serverless_v2_min_capacity=0.5,
+            serverless_v2_min_capacity=1 if is_prod else 0.5,
             serverless_v2_max_capacity=4 if is_prod else 2,
             vpc=vpc,
             vpc_subnets=ec2.SubnetSelection(
@@ -102,6 +105,13 @@ class SmartCampusPlatformStack(cdk.Stack):
             cloudwatch_logs_exports=["postgresql"],
             cloudwatch_logs_retention=logs.RetentionDays.ONE_MONTH,
         )
+        if not is_prod:
+            # Escape hatch: 0 ACU = auto-pause after 5 idle minutes (Aurora PostgreSQL 16.3+), so a
+            # dev/demo cluster costs no compute between uses. This CDK version still validates >= 0.5.
+            cfn_cluster = cluster.node.default_child
+            cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.MinCapacity", 0)
+            cfn_cluster.add_property_override("ServerlessV2ScalingConfiguration.SecondsUntilAutoPause", 300)
+
         # Least-privilege service credential for the ingest path (role created by db/init scripts).
         ingest_secret = rds.DatabaseSecret(self, "IngestDbSecret", username="ingest_writer",
                                            master_secret=cluster.secret)
