@@ -20,13 +20,13 @@ from aws_cdk import aws_ec2 as ec2
 from aws_cdk import aws_iam as iam
 from aws_cdk import aws_iot as iot
 from aws_cdk import aws_lambda as lambda_
+from aws_cdk import aws_lambda_destinations as destinations
 from aws_cdk import aws_logs as logs
 from aws_cdk import aws_rds as rds
 from aws_cdk import aws_s3 as s3
-from aws_cdk import aws_lambda_destinations as destinations
 from aws_cdk import aws_sns as sns
-from aws_cdk import aws_sqs as sqs
 from aws_cdk import aws_sns_subscriptions as subs
+from aws_cdk import aws_sqs as sqs
 from constructs import Construct
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
